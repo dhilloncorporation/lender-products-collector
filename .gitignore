@@ -18,3 +18,20 @@ env/
 .vscode/
 *.log
 
+# Data directory (collected loan products)
+data/
+
+# LangGraph state
+langgraph_state.db
+
+# Test output
+test_output.json
+
+# Debug outputs (organized by category)
+debug/*/outputs/
+
+# Old debug files (cleanup)
+debug_*.html
+debug_*.png
+debug_scraper.py
+

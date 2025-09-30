@@ -1,0 +1,70 @@
+[
+  {
+    "id": "cba",
+    "lender_name": "Commonwealth Bank of Australia",
+    "abbreviation": "CBA",
+    "lender_type": "major_bank",
+    "lender_type_descr": "Major Bank",
+    "headquarters": "Sydney, NSW",
+    "domain": "commbank.com.au",
+    "website": "https://www.commbank.com.au",
+    "jurisdiction": "AU",
+    "enabled": true,
+    "priority": 1,
+    "collection_urls": [
+      "https://www.commbank.com.au/home-loans/interest-rates.html",
+      "https://www.commbank.com.au/home-loans.html"
+    ]
+  },
+  {
+    "id": "westpac",
+    "lender_name": "Westpac Banking Corporation",
+    "abbreviation": "Westpac",
+    "lender_type": "major_bank",
+    "lender_type_descr": "Major Bank",
+    "headquarters": "Sydney, NSW",
+    "domain": "westpac.com.au",
+    "website": "https://www.westpac.com.au",
+    "jurisdiction": "AU",
+    "enabled": true,
+    "priority": 1,
+    "collection_urls": [
+      "https://www.westpac.com.au/personal-banking/home-loans/home-loan-rates/",
+      "https://www.westpac.com.au/personal-banking/home-loans/compare/"
+    ]
+  },
+  {
+    "id": "nab",
+    "lender_name": "National Australia Bank",
+    "abbreviation": "NAB",
+    "lender_type": "major_bank",
+    "lender_type_descr": "Major Bank",
+    "headquarters": "Melbourne, VIC",
+    "domain": "nab.com.au",
+    "website": "https://www.nab.com.au",
+    "jurisdiction": "AU",
+    "enabled": true,
+    "priority": 1,
+    "collection_urls": [
+      "https://www.nab.com.au/personal/home-loans/offers",
+      "https://www.nab.com.au/personal/home-loans/compare-our-home-loan-rates"
+    ]
+  },
+  {
+    "id": "anz",
+    "lender_name": "Australia and New Zealand Banking Group",
+    "abbreviation": "ANZ",
+    "lender_type": "major_bank",
+    "lender_type_descr": "Major Bank",
+    "headquarters": "Melbourne, VIC",
+    "domain": "anz.com.au",
+    "website": "https://www.anz.com.au",
+    "jurisdiction": "AU",
+    "enabled": true,
+    "priority": 1,
+    "collection_urls": [
+      "https://www.anz.com.au/personal/home-loans/interest-rates/",
+      "https://www.anz.com.au/personal/home-loans/"
+    ]
+  }
+]

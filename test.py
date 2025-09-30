@@ -1,99 +1,135 @@
-import os
+"""
+Test script for Playwright collector agent.
+
+This script tests the PlaywrightCollectorAgent by scraping a sample lender website.
+For production use, run: python run_collection.py
+"""
+
+import asyncio
 import json
-import re
 import sys
 from typing import List, Dict, Any
 
 try:
-    from firecrawl import FirecrawlApp
-except Exception as import_error:  # pragma: no cover
-    print("Error: firecrawl SDK not installed. Run: pip install firecrawl-py", file=sys.stderr)
+    from src.agents.collector.playwright_collector import PlaywrightCollectorAgent
+    from src.services.json_storage import JSONStorageService
+except Exception as import_error:
+    print("Error: Required modules not installed. Run: pip install -r requirements.txt", file=sys.stderr)
+    print("For Playwright: playwright install", file=sys.stderr)
     raise
 
 
-TARGET_URLS: List[str] = [
-    # ANZ Australia home loans (public product/rates pages)
-    "https://www.anz.com.au/personal/home-loans/interest-rates/",
-    "https://www.anz.com.au/personal/home-loans/",
-]
+# Sample lender configuration for testing
+# In production, this comes from src/configs/lenders.json
+TEST_LENDER = {
+    "name": "ANZ",
+    "urls": [
+        {
+            "url": "https://www.anz.com.au/personal/home-loans/interest-rates/",
+            "type": "rates_table",
+            "description": "Current interest rates with LVR brackets"
+        }
+    ]
+}
 
 
-def extract_candidates(markdown: str) -> List[Dict[str, Any]]:
-    """Very lightweight heuristic extraction from markdown.
-
-    Note: Firecrawl can also be prompted to produce JSON directly via /extract
-    or via the agent prompt. This simple parser provides a quick baseline.
-    """
-    lines = [line.strip() for line in markdown.splitlines() if line.strip()]
-    results: List[Dict[str, Any]] = []
-    current: Dict[str, Any] = {}
-
-    rate_regex = re.compile(r"(\d{1,2}\.\d{1,3})\s*%")
-    product_regex = re.compile(r"^(?:#+\s*)?([A-Z][\w&\- +'’]+(Home|Fixed|Variable|Loan)[\w&\- +'’]*)$", re.I)
-
-    for line in lines:
-        if product_regex.match(line):
-            if current:
-                results.append(current)
-            current = {"product_name": line, "rates": [], "notes": []}
-            continue
-
-        for m in rate_regex.findall(line):
+async def test_collector() -> Dict[str, Any]:
+    """Test the Playwright collector agent with a sample lender."""
+    print("="*80)
+    print("Testing Playwright Collector Agent")
+    print("="*80)
+    print(f"\nLender: {TEST_LENDER['name']}")
+    print(f"URLs to scrape: {len(TEST_LENDER['urls'])}\n")
+    
+    all_products = []
+    results = []
+    
+    async with PlaywrightCollectorAgent(headless=True) as collector:
+        for url_config in TEST_LENDER['urls']:
+            url = url_config["url"]
+            url_type = url_config["type"]
+            description = url_config["description"]
+            
             try:
-                rate = float(m)
-            except Exception:
-                continue
-            current.setdefault("rates", []).append({"rate_percent": rate, "source": line})
-
-        if any(k in line.lower() for k in ["comparison", "intro", "fixed", "variable", "cashback", "fee"]):
-            current.setdefault("notes", []).append(line)
-
-    if current:
-        results.append(current)
-    return results
-
-
-def scrape_anz() -> Dict[str, Any]:
-    api_key = os.getenv("FIRECRAWL_API_KEY")
-    if not api_key:
-        print("Error: Set FIRECRAWL_API_KEY in your environment.", file=sys.stderr)
-        sys.exit(1)
-
-    app = FirecrawlApp(api_key=api_key)
-
-    aggregated: List[Dict[str, Any]] = []
-
-    for url in TARGET_URLS:
-        scrape = app.scrape_url(
-            url,
-            {
-                "formats": ["markdown", "html"],
-                "agent": {
-                    "model": "FIRE-1",
-                    "prompt": (
-                        "You are collecting ANZ home loan product info. "
-                        "Identify product names, variable/fixed rates, comparison rates, fees, and any current offers/cashback. "
-                        "Prefer concise bullet points in markdown."
-                    ),
-                },
-            },
-        )
-
-        markdown = scrape.get("markdown") or ""
-        html = scrape.get("html") or ""
-
-        items = extract_candidates(markdown) or []
-        aggregated.append({
-            "url": url,
-            "found_items": items,
-            "raw_lengths": {"markdown": len(markdown), "html": len(html)},
-        })
-
-    return {"source": "anz", "results": aggregated}
+                print(f"📡 Scraping: {url}")
+                print(f"   Type: {url_type}")
+                print(f"   Description: {description}")
+                
+                products = await collector.collect_from_url(
+                    url=url,
+                    lender_name=TEST_LENDER['name']
+                )
+                
+                # Convert to dict for JSON output
+                products_data = [p.model_dump() for p in products]
+                all_products.extend(products)
+                
+                results.append({
+                    "url": url,
+                    "type": url_type,
+                    "description": description,
+                    "products_found": len(products_data),
+                    "status": "success"
+                })
+                
+                print(f"   ✅ Found {len(products_data)} products\n")
+                
+            except Exception as e:
+                print(f"   ❌ Error: {str(e)}\n", file=sys.stderr)
+                results.append({
+                    "url": url,
+                    "type": url_type,
+                    "description": description,
+                    "products_found": 0,
+                    "status": "error",
+                    "error": str(e)
+                })
+    
+    # Optionally save to JSON storage
+    if all_products:
+        print("💾 Saving to JSON storage...")
+        storage = JSONStorageService()
+        try:
+            await storage.save_current_products(
+                products=all_products,
+                lender=TEST_LENDER['name']
+            )
+            print(f"   ✅ Saved to data/current/by_lender/{TEST_LENDER['name']}.json\n")
+        except Exception as e:
+            print(f"   ⚠️  Storage error: {e}\n")
+    
+    print("="*80)
+    print("Test Complete")
+    print("="*80)
+    print(f"\nTotal products collected: {len(all_products)}")
+    print(f"Successful URLs: {sum(1 for r in results if r['status'] == 'success')}")
+    print(f"Failed URLs: {sum(1 for r in results if r['status'] == 'error')}")
+    
+    return {
+        "lender": TEST_LENDER['name'],
+        "total_products": len(all_products),
+        "results": results,
+        "products": [p.model_dump() for p in all_products]
+    }
 
 
 if __name__ == "__main__":
-    data = scrape_anz()
-    print(json.dumps(data, indent=2))
+    print("\n🚀 Starting collector test...")
+    print("💡 Tip: For production use, run: python run_collection.py\n")
+    
+    data = asyncio.run(test_collector())
+    
+    # Pretty print summary
+    print("\n📄 JSON Output:")
+    print(json.dumps({
+        "lender": data["lender"],
+        "total_products": data["total_products"],
+        "results": data["results"]
+    }, indent=2))
+    
+    # Save full output to file
+    with open("test_output.json", "w") as f:
+        json.dump(data, f, indent=2)
+    print("\n💾 Full output saved to: test_output.json")
 
 

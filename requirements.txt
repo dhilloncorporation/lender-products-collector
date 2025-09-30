@@ -1,1 +1,41 @@
-firecrawl-py>=0.0.8
+# Core web scraping
+playwright>=1.40.0
+httpx>=0.25.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# API & Web framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# Data validation & models
+pydantic>=2.5.0
+pydantic-settings>=2.0.0
+
+# Workflow orchestration
+apscheduler>=3.10.0
+# prefect>=2.14.0  # Uncomment when ready for production orchestration
+
+# AI/LLM frameworks
+langchain>=0.1.0
+langgraph>=0.0.40
+langchain-openai>=0.0.5
+langchain-community>=0.0.20
+
+# Data processing & change detection
+deepdiff>=6.7.0
+python-dateutil>=2.8.0
+
+# Monitoring & alerts
+requests>=2.31.0  # For webhook alerts (Slack, etc.)
+
+# File storage & compression
+aiofiles>=23.2.0
+
+# Testing dependencies
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.0
+pytest-cov>=4.1.0
+faker>=20.0.0  # For generating test data

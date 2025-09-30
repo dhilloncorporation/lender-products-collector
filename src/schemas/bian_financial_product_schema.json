@@ -1,0 +1,146 @@
+{
+  "schemaVersion": "1.0.0",
+  "bianRefs": [
+    {"serviceDomain":"ProductDirectory","behaviorQualifier":"Definition"},
+    {"serviceDomain":"InterestRates","behaviorQualifier":"RateTable"},
+    {"serviceDomain":"Fees","behaviorQualifier":"Pricing"},
+    {"serviceDomain":"Loan","behaviorQualifier":"Fulfillment"},
+    {"serviceDomain":"CustomerOffer","behaviorQualifier":"Eligibility"}
+  ],
+  "productId": "LP-OO-FixedVar-Offset-2025",
+  "version": "2025.09",
+  "status": "Active",
+  "name": "Premier Home Loan",
+  "shortName": "Premier HL",
+  "description": "Owner-occupied home loan with optional fixed/variable splits, 100% offset and redraw.",
+  "jurisdiction": "AU",
+  "category": "Mortgage",
+  "purpose": "OwnerOccupied_Purchase",
+  "channels": ["Broker","DirectOnline","Branch"],
+
+  "security": {
+    "requiredSecurity": "Secured",
+    "acceptableCollateralTypes": ["ResidentialProperty","ConstructionProgressPayment"],
+    "valuationPolicy": { "method": "Desktop", "providerHint": "CoreLogic/Equifax", "validityDays": 120 }
+  },
+
+  "features": {
+    "offsetAccount": { "enabled": true, "multipleOffsets": true },
+    "redraw": { "enabled": true, "minRedrawAUD": 500, "feeAUD": 0 },
+    "extraRepayments": { "allowed": true, "capPerYearAUD": 30000 },
+    "splitLoans": { "maxSplits": 10 },
+    "rateLock": { "available": true, "feeAUD": 395, "lockDays": 90 },
+    "package": { "bundleName": "Premier Package", "annualFeeAUD": 395 },
+    "repaymentHoliday": { "available": false },
+    "portability": true
+  },
+
+  "pricing": {
+    "interestComponents": [
+      {
+        "name": "FixedPortion",
+        "rateType": "Fixed",
+        "fixedTermMonths": 24,
+        "comparisonRatePctAU": 5.71,
+        "repriceRules": { "lvrBands": [ { "maxLVR": 0.80, "rateAdjPct": -0.10 } ] },
+        "applicability": { "portionMaxPctOfLimit": 0.8, "eligiblePurposes": ["OwnerOccupied_Purchase"] }
+      },
+      {
+        "name": "VariablePortion",
+        "rateType": "VariableIndex",
+        "index": { "name": "RBA_Cash_Rate", "currentPct": 4.35 },
+        "marginPct": 1.20,
+        "floorPct": 4.80,
+        "comparisonRatePctAU": 6.02,
+        "repriceRules": {
+          "lvrBands": [ { "maxLVR": 0.80, "rateAdjPct": -0.15 }, { "maxLVR": 0.90, "rateAdjPct": 0.00 } ],
+          "packageDiscountPct": 0.10
+        },
+        "applicability": { "portionMaxPctOfLimit": 1.0, "eligiblePurposes": ["OwnerOccupied_Purchase","OwnerOccupied_Refinance"] }
+      }
+    ],
+    "calculation": {
+      "accrualDayCount": "ACT/365F",
+      "calculationBasis": "DailyBalance",
+      "compounding": "Monthly"
+    },
+    "fees": {
+      "upfront": [
+        { "code": "APP", "label": "Application Fee", "amountAUD": 0 },
+        { "code": "VAL", "label": "Valuation Fee", "amountAUD": 330 }
+      ],
+      "ongoing": [
+        { "code": "ANNUAL", "label": "Package Fee", "amountAUD": 395, "frequency": "Annual" }
+      ],
+      "eventDriven": [
+        { "code": "BREAK", "label": "Fixed Break Cost", "calculation": "mark-to-market" }
+      ],
+      "governmentChargesHint": [
+        { "jurisdiction": "VIC", "chargeType": "MortgageRegistration" }
+      ]
+    }
+  },
+
+  "repayment": {
+    "repaymentType": "PrincipalAndInterest",
+    "amortizationTermMonths": 360,
+    "ioTermMonthsMax": 0,
+    "frequencyOptions": ["Monthly","Fortnightly","Weekly"]
+  },
+
+  "eligibility": {
+    "minLoanAmountAUD": 50000,
+    "maxLoanAmountAUD": 2000000,
+    "minAgeYears": 18,
+    "residency": ["Citizen","PR","NZCitizen"],
+    "borrowerTypes": ["Individual","Company","Trust"],
+    "occupancy": ["OwnerOccupied","Investment"],
+    "maxLVRBySegment": [
+      { "segment": "OO_PPOR", "maxLVR": 0.95, "lmiRequiredAboveLVR": 0.80 },
+      { "segment": "INV", "maxLVR": 0.90, "lmiRequiredAboveLVR": 0.80 }
+    ],
+    "postcodeCategoriesAllowed": ["CatA","CatB"],
+    "propertyTypesAllowed": ["House","Townhouse","Unit"]
+  },
+
+  "policy": {
+    "serviceability": {
+      "assessmentRateMethod": "FloorVsNoteRatePlusBufferMax",
+      "bufferPct": 3.0,
+      "floorPct": 7.25,
+      "HEMVersion": "HEM_2025_Q2"
+    },
+    "cashOutMaxAUD": 250000,
+    "refinancePolicyNotes": "Debt consolidation allowed; cash-out subject to evidence of purpose.",
+    "breakCostAppliesToFixed": true
+  },
+
+  "distribution": {
+    "tmd": {
+      "tmdId": "TMD-2025-OO-PPOR",
+      "effectiveFrom": "2025-07-01",
+      "positiveTarget": "Consumers seeking home purchase with stable P&I repayments.",
+      "negativeTarget": "Consumers who need revolving credit or high volatility payments.",
+      "distributionConditions": ["Broker accredited with lender","Digital ID","Maximum LVR per segment"],
+      "reviewTriggers": ["Material interest rate changes","Arrears > threshold","Complaints spike"]
+    },
+    "channelsAllowed": ["Broker","DirectOnline","Branch"]
+  },
+
+  "disclosure": {
+    "comparisonRateExample": {
+      "amountAUD": 150000,
+      "termYears": 25,
+      "assumptions": "Includes fees; your circumstances may differ."
+    },
+    "pdsUrl": "https://examplebank.com/pds/premier-hl",
+    "keyFactSheetUrl": "https://examplebank.com/kfs/premier-hl"
+  },
+
+  "compliance": {
+    "apraProductCode": "APRA-MORT-OO-PACK",
+    "asicProductId": "ASIC-PRD-001122",
+    "amlKycNotes": "Standard AUSTRAC requirements apply.",
+    "privacyStatementUrl": "https://examplebank.com/privacy"
+  }
+}
