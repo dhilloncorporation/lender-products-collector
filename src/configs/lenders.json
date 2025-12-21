@@ -17,40 +17,6 @@
     ]
   },
   {
-    "id": "westpac",
-    "lender_name": "Westpac Banking Corporation",
-    "abbreviation": "Westpac",
-    "lender_type": "major_bank",
-    "lender_type_descr": "Major Bank",
-    "headquarters": "Sydney, NSW",
-    "domain": "westpac.com.au",
-    "website": "https://www.westpac.com.au",
-    "jurisdiction": "AU",
-    "enabled": true,
-    "priority": 1,
-    "collection_urls": [
-      "https://www.westpac.com.au/personal-banking/home-loans/home-loan-rates/",
-      "https://www.westpac.com.au/personal-banking/home-loans/compare/"
-    ]
-  },
-  {
-    "id": "nab",
-    "lender_name": "National Australia Bank",
-    "abbreviation": "NAB",
-    "lender_type": "major_bank",
-    "lender_type_descr": "Major Bank",
-    "headquarters": "Melbourne, VIC",
-    "domain": "nab.com.au",
-    "website": "https://www.nab.com.au",
-    "jurisdiction": "AU",
-    "enabled": true,
-    "priority": 1,
-    "collection_urls": [
-      "https://www.nab.com.au/personal/home-loans/offers",
-      "https://www.nab.com.au/personal/home-loans/compare-our-home-loan-rates"
-    ]
-  },
-  {
     "id": "anz",
     "lender_name": "Australia and New Zealand Banking Group",
     "abbreviation": "ANZ",

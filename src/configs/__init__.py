@@ -2,17 +2,20 @@
 
 from .lender_config import LenderConfig, LenderConfigManager
 from .settings_manager import (
-    CollectionSettings, SchedulerSettings, StorageSettings, 
-    MonitoringSettings, APISettings, SettingsManager
+    CollectionSettings, Features, Environment, RateLimits,
+    Debug, Notifications, AI, Validation, YamlSettingsManager
 )
 
 __all__ = [
     "LenderConfig",
     "LenderConfigManager",
     "CollectionSettings",
-    "SchedulerSettings", 
-    "StorageSettings",
-    "MonitoringSettings",
-    "APISettings",
-    "SettingsManager",
+    "Features",
+    "Environment", 
+    "RateLimits",
+    "Debug",
+    "Notifications",
+    "AI",
+    "Validation",
+    "YamlSettingsManager",
 ]

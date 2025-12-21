@@ -9,7 +9,8 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from ..collector.firecrawl_collector import FirecrawlCollectorAgent
-from ...configs import LenderConfigManager, SettingsManager
+from ...configs import LenderConfigManager
+from ...configs.yaml_settings_manager import YamlSettingsManager
 from ..workflows.collection_workflow import CollectionWorkflow
 
 logger = logging.getLogger(__name__)

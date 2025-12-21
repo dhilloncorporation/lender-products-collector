@@ -1,17 +1,78 @@
-"""Product normalizer agent for standardizing loan product data."""
+"""
+Normalizer Agent - Data Standardization
+
+ROLE: Worker Agent (Data Transformation)
+PURPOSE: Normalizes raw loan product data into standardized BIAN schema format
+
+This agent transforms raw, unstructured product data from various sources into
+a consistent, standardized format following the BIAN (Banking Industry
+Architecture Network) schema. It handles parsing, validation, and mapping
+of product attributes.
+
+NORMALIZATION TASKS:
+- Extract lender information
+- Parse product names and descriptions
+- Extract interest rates (comparison rate, variable, fixed)
+- Parse loan terms and amounts
+- Extract product features (offset, redraw, etc.)
+- Parse fees and charges
+- Extract eligibility criteria (LVR, DTI, postcode restrictions)
+- Validate and standardize data formats
+
+FEATURES:
+- Pattern-based extraction (regex for rates, terms, etc.)
+- Feature detection (offset accounts, redraw facilities)
+- Rate type classification (Variable, Fixed, etc.)
+- LVR extraction and validation
+- Postcode restriction parsing
+- Data validation and error handling
+
+DEPENDENCIES:
+- LoanProduct models (BIAN schema)
+- Regular expressions for pattern matching
+
+USAGE:
+    normalizer = ProductNormalizerAgent()
+    normalized = normalizer.normalize_products(raw_products)
+    # Returns List[LoanProduct] in standardized format
+"""
 
 import logging
 import re
 from typing import List, Dict, Any, Optional
 from decimal import Decimal
 from datetime import datetime
-from ...src.models import LoanProduct
+from ...models import LoanProduct
 
 logger = logging.getLogger(__name__)
 
 
 class ProductNormalizerAgent:
-    """Agent that normalizes raw loan product data into standardized format."""
+    """
+    Product normalizer agent for standardizing loan product data.
+    
+    This agent transforms raw, unstructured product data into standardized
+    BIAN schema-compliant LoanProduct objects. It handles parsing, extraction,
+    and validation of product attributes.
+    
+    Normalization Process:
+        1. Extract basic product information (name, description, lender)
+        2. Parse interest rates (comparison rate, rate type)
+        3. Extract loan terms and amounts
+        4. Identify product features (offset, redraw, etc.)
+        5. Parse fees and charges
+        6. Extract eligibility criteria (LVR, DTI, postcode)
+        7. Validate and standardize all data
+    
+    Attributes:
+        normalization_rules: Dictionary of regex patterns and rules for extraction
+    
+    Example:
+        >>> normalizer = ProductNormalizerAgent()
+        >>> raw_data = [{"name": "Variable Home Loan", "rate": "5.99%"}]
+        >>> normalized = normalizer.normalize_products(raw_data)
+        >>> print(f"Normalized {len(normalized)} products")
+    """
     
     def __init__(self):
         self.normalization_rules = {

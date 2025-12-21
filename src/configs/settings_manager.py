@@ -1,391 +1,331 @@
-"""Settings manager for loading and managing configuration files."""
+"""YAML-based settings manager with environment variable substitution."""
 
-import json
+import os
+import re
+import yaml
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
 
+def substitute_env_vars(data: Any) -> Any:
+    """
+    Recursively substitute environment variables in YAML data.
+    
+    Supports syntax: ${VAR_NAME} or ${VAR_NAME:-default_value}
+    """
+    if isinstance(data, dict):
+        return {key: substitute_env_vars(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [substitute_env_vars(item) for item in data]
+    elif isinstance(data, str):
+        # Pattern: ${VAR_NAME} or ${VAR_NAME:-default}
+        pattern = r'\$\{([^:}]+)(?::-([^}]*))?\}'
+        
+        def replace_var(match):
+            var_name = match.group(1)
+            default_value = match.group(2) if match.group(2) is not None else ""
+            return os.getenv(var_name, default_value)
+        
+        return re.sub(pattern, replace_var, data)
+    else:
+        return data
+
+
 @dataclass
 class CollectionSettings:
     """Collection operation settings."""
-    default_frequency: str
-    volatile_lenders_hourly: bool
     max_retries: int
-    retry_delay_seconds: int
     timeout_seconds: int
     concurrent_collections: int
     rate_limit_per_minute: int
-    user_agent: str
-    respect_robots_txt: bool
-    follow_redirects: bool
-    max_redirects: int
+    default_frequency: str
+    volatile_lenders_hourly: bool
 
 
 @dataclass
-class SchedulerSettings:
-    """Scheduler operation settings."""
-    daily_collection_time: str
-    hourly_collection_enabled: bool
-    timezone: str
-    job_coalesce: bool
-    max_instances: int
+class Features:
+    """Feature flags."""
+    google_search_enabled: bool
+    notifications_enabled: bool
+    debug_mode: bool
+    firecrawl_enabled: bool
 
 
 @dataclass
-class StorageSettings:
-    """Storage operation settings."""
-    data_path: str
-    index_file: str
-    backup_enabled: bool
-    backup_retention_days: int
-    compression_enabled: bool
-
-
-@dataclass
-class MonitoringSettings:
-    """Monitoring operation settings."""
+class Environment:
+    """Environment-specific settings."""
     log_level: str
-    metrics_retention_days: int
-    alert_on_failure_rate: float
-    alert_on_stale_data_hours: int
-    health_check_interval_minutes: int
+    api_port: int
+    data_path: str
+    timezone: str
 
 
 @dataclass
-class APISettings:
-    """API operation settings."""
-    host: str
-    port: int
-    cors_origins: list
-    rate_limit_per_minute: int
-    max_response_size_mb: int
+class RateLimits:
+    """Rate limiting and timing settings."""
+    # Web Search timing
+    search_delay_seconds: int
+    search_between_queries_seconds: int
+    search_daily_limit: int
+    
+    # Per-lender timing
+    per_lender_delay_seconds: int
+    per_url_delay_seconds: int
+    
+    # Request-level timing
+    request_delay_ms: int
+    global_requests_per_minute: int
+    
+    # Backoff strategy
+    backoff_enabled: bool
+    backoff_initial_delay_seconds: int
+    backoff_max_delay_seconds: int
+    backoff_multiplier: float
+    backoff_max_attempts: int
+    
+    # Human-like behavior timing (with defaults)
+    human_like_delays: bool = True
+    min_delay_seconds: int = 10
+    max_delay_seconds: int = 30
+    random_jitter: bool = True
 
 
 @dataclass
-class LangChainSettings:
-    """LangChain model and configuration settings."""
-    model_provider: str
-    model_name: str
+class SearchEngine:
+    """Individual search engine configuration."""
+    name: str
+    base_url: str
+    params: str
+    user_agent: str
+    timeout_seconds: int
+    rate_limit_per_hour: int
+
+
+@dataclass
+class GoogleCustomSearch:
+    """Google Custom Search API configuration."""
+    name: str
+    enabled: bool
+    priority: int
+    api_key_env: str
+    search_engine_id_env: str
+    base_url: str
+    daily_limit: int
+    cost_per_1000: float
+    timeout_seconds: int
+    search_delay_seconds: int
+    between_queries_delay_seconds: int
+    human_like_delays: bool
+    random_jitter: bool
+
+
+@dataclass
+class WebSearch:
+    """Web search configuration."""
+    primary_engine: str
+    google_custom_search: Optional[GoogleCustomSearch]
+    engines: Dict[str, SearchEngine]
+    fallback_enabled: bool
+    fallback_order: List[str]
+    search_templates: Dict[str, str]
+
+
+@dataclass
+class Debug:
+    """Debug settings."""
+    save_html: bool
+    save_screenshots: bool
+    output_path: str
+
+
+@dataclass
+class Notifications:
+    """Notification settings."""
+    email: Dict[str, Any]
+    slack: Dict[str, str]
+
+
+@dataclass
+class AI:
+    """AI/LLM settings."""
+    openai_model: str
+    openai_api_key_env: str
     temperature: float
     max_tokens: int
-    api_key_env: str
-    streaming: bool
-    timeout_seconds: int
 
 
 @dataclass
-class LangGraphSettings:
-    """LangGraph orchestration settings."""
-    state_management: str
-    max_iterations: int
-    checkpointer_type: str
-    checkpointer_config: dict
-    interrupt_before: list
-    interrupt_after: list
+class Validation:
+    """Data validation settings."""
+    enabled: bool
+    min_rate: float
+    max_rate: float
+    max_age_hours: int
 
 
-class SettingsManager:
-    """Manager for loading and accessing configuration settings."""
+class YamlSettingsManager:
+    """Manager for loading and accessing YAML configuration settings with env var substitution."""
     
     def __init__(self, config_dir: str = "src/configs"):
         self.config_dir = Path(config_dir)
         self.collection_settings: Optional[CollectionSettings] = None
-        self.scheduler_settings: Optional[SchedulerSettings] = None
-        self.storage_settings: Optional[StorageSettings] = None
-        self.monitoring_settings: Optional[MonitoringSettings] = None
-        self.api_settings: Optional[APISettings] = None
-        self.langchain_settings: Optional[LangChainSettings] = None
-        self.langgraph_settings: Optional[LangGraphSettings] = None
+        self.features: Optional[Features] = None
+        self.environment: Optional[Environment] = None
+        self.rate_limits: Optional[RateLimits] = None
+        self.web_search: Optional[WebSearch] = None
+        self.debug: Optional[Debug] = None
+        self.notifications: Optional[Notifications] = None
+        self.ai: Optional[AI] = None
+        self.validation: Optional[Validation] = None
         
-        self.load_all_settings()
+        self._load_all_settings()
     
-    def load_all_settings(self):
-        """Load all configuration settings."""
-        self.load_collection_settings()
-        self.load_scheduler_settings()
-        self.load_storage_settings()
-        self.load_monitoring_settings()
-        self.load_api_settings()
-        self.load_langchain_settings()
-        self.load_langgraph_settings()
-    
-    def load_collection_settings(self):
-        """Load collection settings from JSON file."""
+    def _load_yaml_file(self, filename: str) -> Dict[str, Any]:
+        """Load and parse a YAML file with environment variable substitution."""
+        file_path = self.config_dir / filename
+        
+        if not file_path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {file_path}")
+        
         try:
-            settings_file = self.config_dir / "collection_settings.json"
-            with open(settings_file, 'r') as f:
-                data = json.load(f)
+            with open(file_path, 'r', encoding='utf-8') as f:
+                raw_data = yaml.safe_load(f)
             
-            collection_data = data["collection_settings"]
-            self.collection_settings = CollectionSettings(
-                default_frequency=collection_data["default_frequency"],
-                volatile_lenders_hourly=collection_data["volatile_lenders_hourly"],
-                max_retries=collection_data["max_retries"],
-                retry_delay_seconds=collection_data["retry_delay_seconds"],
-                timeout_seconds=collection_data["timeout_seconds"],
-                concurrent_collections=collection_data["concurrent_collections"],
-                rate_limit_per_minute=collection_data["rate_limit_per_minute"],
-                user_agent=collection_data["user_agent"],
-                respect_robots_txt=collection_data["respect_robots_txt"],
-                follow_redirects=collection_data["follow_redirects"],
-                max_redirects=collection_data["max_redirects"]
+            # Substitute environment variables
+            processed_data = substitute_env_vars(raw_data)
+            
+            logger.info(f"Loaded configuration from {file_path}")
+            return processed_data
+            
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {file_path}: {e}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load {file_path}: {e}")
+    
+    def _load_all_settings(self):
+        """Load all configuration settings from YAML files."""
+        try:
+            # Load main configuration
+            config_data = self._load_yaml_file("collection_settings.yaml")
+            
+            # Load each settings section
+            self.collection_settings = CollectionSettings(**config_data["collection_settings"])
+            self.features = Features(**config_data["features"])
+            self.environment = Environment(**config_data["environment"])
+            
+            # Load rate limits with fallback for new fields
+            rate_limits_data = config_data["rate_limits"]
+            self.rate_limits = RateLimits(
+                search_delay_seconds=rate_limits_data.get("search_delay_seconds", 15),
+                search_between_queries_seconds=rate_limits_data.get("search_between_queries_seconds", 20),
+                search_daily_limit=rate_limits_data.get("search_daily_limit", 50),
+                human_like_delays=rate_limits_data.get("human_like_delays", True),
+                min_delay_seconds=rate_limits_data.get("min_delay_seconds", 10),
+                max_delay_seconds=rate_limits_data.get("max_delay_seconds", 30),
+                random_jitter=rate_limits_data.get("random_jitter", True),
+                per_lender_delay_seconds=rate_limits_data.get("per_lender_delay_seconds", 3),
+                per_url_delay_seconds=rate_limits_data.get("per_url_delay_seconds", 2),
+                request_delay_ms=rate_limits_data.get("request_delay_ms", 100),
+                global_requests_per_minute=rate_limits_data.get("global_requests_per_minute", 60),
+                backoff_enabled=rate_limits_data.get("backoff_enabled", True),
+                backoff_initial_delay_seconds=rate_limits_data.get("backoff_initial_delay_seconds", 60),
+                backoff_max_delay_seconds=rate_limits_data.get("backoff_max_delay_seconds", 1800),
+                backoff_multiplier=rate_limits_data.get("backoff_multiplier", 2.0),
+                backoff_max_attempts=rate_limits_data.get("backoff_max_attempts", 5)
             )
             
-            logger.info("Collection settings loaded successfully")
+            # Load web search configuration
+            web_search_data = config_data["web_search"]
+            engines = {}
+            for engine_name, engine_data in web_search_data["engines"].items():
+                engines[engine_name] = SearchEngine(**engine_data)
             
-        except Exception as e:
-            logger.error(f"Failed to load collection settings: {str(e)}")
-            self._create_default_collection_settings()
-    
-    def load_scheduler_settings(self):
-        """Load scheduler settings from JSON file."""
-        try:
-            settings_file = self.config_dir / "collection_settings.json"
-            with open(settings_file, 'r') as f:
-                data = json.load(f)
+            # Load Google Custom Search configuration if present
+            google_custom_search = None
+            if "google_custom_search" in web_search_data:
+                google_custom_search = GoogleCustomSearch(**web_search_data["google_custom_search"])
             
-            scheduler_data = data["scheduler_settings"]
-            self.scheduler_settings = SchedulerSettings(
-                daily_collection_time=scheduler_data["daily_collection_time"],
-                hourly_collection_enabled=scheduler_data["hourly_collection_enabled"],
-                timezone=scheduler_data["timezone"],
-                job_coalesce=scheduler_data["job_coalesce"],
-                max_instances=scheduler_data["max_instances"]
+            self.web_search = WebSearch(
+                primary_engine=web_search_data["primary_engine"],
+                google_custom_search=google_custom_search,
+                engines=engines,
+                fallback_enabled=web_search_data["fallback_enabled"],
+                fallback_order=web_search_data["fallback_order"],
+                search_templates=web_search_data["search_templates"]
             )
             
-            logger.info("Scheduler settings loaded successfully")
+            self.debug = Debug(**config_data["debug"])
+            self.notifications = Notifications(**config_data["notifications"])
+            self.ai = AI(**config_data["ai"])
+            self.validation = Validation(**config_data["validation"])
+            
+            logger.info("All configuration settings loaded successfully")
             
         except Exception as e:
-            logger.error(f"Failed to load scheduler settings: {str(e)}")
-            self._create_default_scheduler_settings()
+            logger.error(f"Failed to load configuration: {e}")
+            raise
     
-    def load_storage_settings(self):
-        """Load storage settings from JSON file."""
-        try:
-            settings_file = self.config_dir / "collection_settings.json"
-            with open(settings_file, 'r') as f:
-                data = json.load(f)
-            
-            storage_data = data["storage_settings"]
-            self.storage_settings = StorageSettings(
-                data_path=storage_data["data_path"],
-                index_file=storage_data["index_file"],
-                backup_enabled=storage_data["backup_enabled"],
-                backup_retention_days=storage_data["backup_retention_days"],
-                compression_enabled=storage_data["compression_enabled"]
-            )
-            
-            logger.info("Storage settings loaded successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to load storage settings: {str(e)}")
-            self._create_default_storage_settings()
-    
-    def load_monitoring_settings(self):
-        """Load monitoring settings from JSON file."""
-        try:
-            settings_file = self.config_dir / "collection_settings.json"
-            with open(settings_file, 'r') as f:
-                data = json.load(f)
-            
-            monitoring_data = data["monitoring_settings"]
-            self.monitoring_settings = MonitoringSettings(
-                log_level=monitoring_data["log_level"],
-                metrics_retention_days=monitoring_data["metrics_retention_days"],
-                alert_on_failure_rate=monitoring_data["alert_on_failure_rate"],
-                alert_on_stale_data_hours=monitoring_data["alert_on_stale_data_hours"],
-                health_check_interval_minutes=monitoring_data["health_check_interval_minutes"]
-            )
-            
-            logger.info("Monitoring settings loaded successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to load monitoring settings: {str(e)}")
-            self._create_default_monitoring_settings()
-    
-    def load_api_settings(self):
-        """Load API settings from JSON file."""
-        try:
-            settings_file = self.config_dir / "collection_settings.json"
-            with open(settings_file, 'r') as f:
-                data = json.load(f)
-            
-            api_data = data["api_settings"]
-            self.api_settings = APISettings(
-                host=api_data["host"],
-                port=api_data["port"],
-                cors_origins=api_data["cors_origins"],
-                rate_limit_per_minute=api_data["rate_limit_per_minute"],
-                max_response_size_mb=api_data["max_response_size_mb"]
-            )
-            
-            logger.info("API settings loaded successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to load API settings: {str(e)}")
-            self._create_default_api_settings()
-    
-    def load_langchain_settings(self):
-        """Load LangChain settings from JSON file."""
-        try:
-            settings_file = self.config_dir / "collection_settings.json"
-            with open(settings_file, 'r') as f:
-                data = json.load(f)
-            
-            langchain_data = data["langchain_settings"]
-            self.langchain_settings = LangChainSettings(
-                model_provider=langchain_data["model_provider"],
-                model_name=langchain_data["model_name"],
-                temperature=langchain_data["temperature"],
-                max_tokens=langchain_data["max_tokens"],
-                api_key_env=langchain_data["api_key_env"],
-                streaming=langchain_data["streaming"],
-                timeout_seconds=langchain_data["timeout_seconds"]
-            )
-            
-            logger.info("LangChain settings loaded successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to load LangChain settings: {str(e)}")
-            self._create_default_langchain_settings()
-    
-    def load_langgraph_settings(self):
-        """Load LangGraph settings from JSON file."""
-        try:
-            settings_file = self.config_dir / "collection_settings.json"
-            with open(settings_file, 'r') as f:
-                data = json.load(f)
-            
-            langgraph_data = data["langgraph_settings"]
-            self.langgraph_settings = LangGraphSettings(
-                state_management=langgraph_data["state_management"],
-                max_iterations=langgraph_data["max_iterations"],
-                checkpointer_type=langgraph_data["checkpointer_type"],
-                checkpointer_config=langgraph_data["checkpointer_config"],
-                interrupt_before=langgraph_data["interrupt_before"],
-                interrupt_after=langgraph_data["interrupt_after"]
-            )
-            
-            logger.info("LangGraph settings loaded successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to load LangGraph settings: {str(e)}")
-            self._create_default_langgraph_settings()
-    
-    def _create_default_collection_settings(self):
-        """Create default collection settings."""
-        self.collection_settings = CollectionSettings(
-            default_frequency="daily",
-            volatile_lenders_hourly=True,
-            max_retries=3,
-            retry_delay_seconds=60,
-            timeout_seconds=30,
-            concurrent_collections=5,
-            rate_limit_per_minute=60,
-            user_agent="LenderProductsCollector/1.0",
-            respect_robots_txt=True,
-            follow_redirects=True,
-            max_redirects=5
-        )
-        logger.warning("Using default collection settings")
-    
-    def _create_default_scheduler_settings(self):
-        """Create default scheduler settings."""
-        self.scheduler_settings = SchedulerSettings(
-            daily_collection_time="02:00",
-            hourly_collection_enabled=True,
-            timezone="Australia/Sydney",
-            job_coalesce=True,
-            max_instances=1
-        )
-        logger.warning("Using default scheduler settings")
-    
-    def _create_default_storage_settings(self):
-        """Create default storage settings."""
-        self.storage_settings = StorageSettings(
-            data_path="data/products",
-            index_file="index.json",
-            backup_enabled=True,
-            backup_retention_days=30,
-            compression_enabled=False
-        )
-        logger.warning("Using default storage settings")
-    
-    def _create_default_monitoring_settings(self):
-        """Create default monitoring settings."""
-        self.monitoring_settings = MonitoringSettings(
-            log_level="INFO",
-            metrics_retention_days=90,
-            alert_on_failure_rate=0.2,
-            alert_on_stale_data_hours=48,
-            health_check_interval_minutes=15
-        )
-        logger.warning("Using default monitoring settings")
-    
-    def _create_default_api_settings(self):
-        """Create default API settings."""
-        self.api_settings = APISettings(
-            host="0.0.0.0",
-            port=8000,
-            cors_origins=["*"],
-            rate_limit_per_minute=100,
-            max_response_size_mb=10
-        )
-        logger.warning("Using default API settings")
-    
-    def _create_default_langchain_settings(self):
-        """Create default LangChain settings."""
-        self.langchain_settings = LangChainSettings(
-            model_provider="openai",
-            model_name="gpt-4o-mini",
-            temperature=0.1,
-            max_tokens=4000,
-            api_key_env="OPENAI_API_KEY",
-            streaming=False,
-            timeout_seconds=30
-        )
-        logger.warning("Using default LangChain settings")
-    
-    def _create_default_langgraph_settings(self):
-        """Create default LangGraph settings."""
-        self.langgraph_settings = LangGraphSettings(
-            state_management="memory",
-            max_iterations=10,
-            checkpointer_type="sqlite",
-            checkpointer_config={"db_path": "langgraph_state.db"},
-            interrupt_before=[],
-            interrupt_after=[]
-        )
-        logger.warning("Using default LangGraph settings")
-    
+    # Getter methods for each settings section
     def get_collection_settings(self) -> CollectionSettings:
-        """Get collection settings."""
+        """Get collection operation settings."""
         return self.collection_settings
     
-    def get_scheduler_settings(self) -> SchedulerSettings:
-        """Get scheduler settings."""
-        return self.scheduler_settings
+    def get_features(self) -> Features:
+        """Get feature flags."""
+        return self.features
     
-    def get_storage_settings(self) -> StorageSettings:
-        """Get storage settings."""
-        return self.storage_settings
+    def get_environment(self) -> Environment:
+        """Get environment-specific settings."""
+        return self.environment
     
-    def get_monitoring_settings(self) -> MonitoringSettings:
-        """Get monitoring settings."""
-        return self.monitoring_settings
+    def get_rate_limits(self) -> RateLimits:
+        """Get rate limiting settings."""
+        return self.rate_limits
     
-    def get_api_settings(self) -> APISettings:
-        """Get API settings."""
-        return self.api_settings
+    def get_debug(self) -> Debug:
+        """Get debug settings."""
+        return self.debug
     
-    def get_langchain_settings(self) -> LangChainSettings:
-        """Get LangChain settings."""
-        return self.langchain_settings
+    def get_notifications(self) -> Notifications:
+        """Get notification settings."""
+        return self.notifications
     
-    def get_langgraph_settings(self) -> LangGraphSettings:
-        """Get LangGraph settings."""
-        return self.langgraph_settings
+    def get_ai(self) -> AI:
+        """Get AI/LLM settings."""
+        return self.ai
+    
+    def get_validation(self) -> Validation:
+        """Get data validation settings."""
+        return self.validation
+    
+    def get_web_search(self) -> WebSearch:
+        """Get web search settings."""
+        return self.web_search
+    
+    def get_web_search_config(self) -> Dict[str, Any]:
+        """Get web search configuration as dictionary for compatibility."""
+        from dataclasses import asdict
+        return asdict(self.web_search)
+    
+    def get_all_settings(self) -> Dict[str, Any]:
+        """Get all settings as a dictionary."""
+        return {
+            "collection_settings": self.collection_settings,
+            "features": self.features,
+            "environment": self.environment,
+            "rate_limits": self.rate_limits,
+            "debug": self.debug,
+            "notifications": self.notifications,
+            "ai": self.ai,
+            "validation": self.validation,
+        }
+    
+    def reload_settings(self):
+        """Reload all settings from configuration files."""
+        logger.info("Reloading all configuration settings...")
+        self._load_all_settings()
+        logger.info("Configuration settings reloaded successfully")

@@ -192,6 +192,14 @@ class LenderConfigManager:
                 enabled=True
             )
         ]
+        # Initialize lenders_raw for get_lender_by_abbreviation to work
+        self.lenders_raw = [
+            {
+                "abbreviation": "ANZ",
+                "lender_name": "ANZ Bank",
+                "collection_urls": ["https://www.anz.com.au/personal/home-loans/"]
+            }
+        ]
         self.collection_settings = {
             "default_frequency": "daily",
             "max_retries": 3,

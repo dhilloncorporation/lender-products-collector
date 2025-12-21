@@ -1,4 +1,40 @@
-"""Product API agent for serving collected data to external systems."""
+"""
+API Agent - REST API Exposure
+
+ROLE: Worker Agent (API Service)
+PURPOSE: Exposes collected loan product data via REST API endpoints
+
+This agent provides a FastAPI-based REST API for accessing collected loan
+product data. It integrates with Storage Agent and Monitoring Agent to serve
+data and provide system health information.
+
+API ENDPOINTS:
+- GET /products - Get all products (with filters)
+- GET /products/{lender} - Get products by lender
+- GET /stats - Get collection statistics
+- GET /health - Health check endpoint
+- GET /changes - Get recent product changes
+
+FEATURES:
+- RESTful API design
+- Query parameter filtering (lender, rate_type, min_rate, max_rate)
+- Integration with Storage Agent for data access
+- Integration with Monitoring Agent for statistics
+- Error handling and validation
+- FastAPI automatic documentation
+
+DEPENDENCIES:
+- FastAPI (web framework)
+- Storage Agent (ProductStorageAgent)
+- Monitoring Agent (CollectionMonitorAgent)
+- LoanProduct models
+
+USAGE:
+    storage_agent = ProductStorageAgent()
+    monitor_agent = CollectionMonitorAgent()
+    api_agent = ProductAPIAgent(storage_agent, monitor_agent)
+    # Include router in FastAPI app: app.include_router(api_agent.router)
+"""
 
 import logging
 from typing import List, Dict, Any, Optional
@@ -11,7 +47,31 @@ logger = logging.getLogger(__name__)
 
 
 class ProductAPIAgent:
-    """Agent that exposes collected product data via REST API."""
+    """
+    Product API agent for serving collected data via REST API.
+    
+    This agent creates FastAPI routes to expose loan product data to external
+    systems. It provides endpoints for querying products, getting statistics,
+    and checking system health.
+    
+    Attributes:
+        storage_agent: Storage agent for accessing product data
+        monitor_agent: Monitoring agent for statistics and health checks
+        router: FastAPI router with all API endpoints
+    
+    Endpoints:
+        GET /products - List all products (with optional filters)
+        GET /products/{lender} - Get products for specific lender
+        GET /stats - Get collection statistics
+        GET /health - Health check endpoint
+        GET /changes - Get recent product changes
+    
+    Example:
+        >>> storage = ProductStorageAgent()
+        >>> monitor = CollectionMonitorAgent()
+        >>> api = ProductAPIAgent(storage, monitor)
+        >>> app.include_router(api.router, prefix="/api/v1")
+    """
     
     def __init__(self, storage_agent: ProductStorageAgent, monitor_agent: CollectionMonitorAgent):
         self.storage_agent = storage_agent

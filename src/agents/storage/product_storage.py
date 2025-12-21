@@ -1,4 +1,36 @@
-"""Product storage agent for handling data persistence and deduplication."""
+"""
+Storage Agent - Data Persistence and Management
+
+ROLE: Worker Agent (Data Storage)
+PURPOSE: Handles product data storage, deduplication, and versioning
+
+This agent manages the persistence layer for collected loan products. It
+provides functionality for storing, retrieving, filtering, and managing
+product data with deduplication and versioning support.
+
+FEATURES:
+- Product storage with deduplication (hash-based)
+- Versioning and change tracking
+- Filtering and querying capabilities
+- Statistics and reporting
+- Data validation
+- JSON file-based storage
+
+STORAGE STRUCTURE:
+- Products stored in JSON format
+- Hash-based deduplication
+- Index for fast lookups
+- Version history tracking
+
+DEPENDENCIES:
+- LoanProduct models (BIAN schema)
+- Pathlib for file operations
+
+USAGE:
+    storage = ProductStorageAgent(storage_path="data/products")
+    result = storage.store_products(products)
+    products = storage.get_products(lender="ANZ", rate_type="Variable")
+"""
 
 import json
 import logging
@@ -6,13 +38,36 @@ import hashlib
 from typing import List, Dict, Any, Optional, Set
 from datetime import datetime, timedelta
 from pathlib import Path
-from ...src.models import LoanProduct
+import aiofiles
+from ...models import LoanProduct
 
 logger = logging.getLogger(__name__)
 
 
 class ProductStorageAgent:
-    """Agent that handles product data storage, deduplication, and versioning."""
+    """
+    Product storage agent for handling data persistence and deduplication.
+    
+    This agent manages the storage and retrieval of loan product data with
+    built-in deduplication, versioning, and filtering capabilities.
+    
+    Attributes:
+        storage_path: Base directory for storing product data
+        product_index: Hash-based index for fast product lookups
+    
+    Features:
+        - Hash-based deduplication (prevents duplicate products)
+        - Version tracking (tracks product changes over time)
+        - Filtering (by lender, rate_type, date range, etc.)
+        - Statistics (product counts, change tracking)
+        - JSON file-based storage
+    
+    Example:
+        >>> storage = ProductStorageAgent()
+        >>> result = storage.store_products(products)
+        >>> print(f"Stored: {result['stored']}, Duplicates: {result['duplicates']}")
+        >>> products = storage.get_products(lender="ANZ")
+    """
     
     def __init__(self, storage_path: str = "data/products"):
         self.storage_path = Path(storage_path)
@@ -241,3 +296,128 @@ class ProductStorageAgent:
                 self.product_index = {}
         else:
             self.product_index = {}
+    
+    async def save_current_products(
+        self, 
+        products: List[LoanProduct], 
+        lender: Optional[str] = None
+    ) -> str:
+        """
+        Save current products to JSON file (compatible with JSONStorageService interface).
+        
+        Args:
+            products: List of loan products to save
+            lender: If provided, saves to lender-specific file
+            
+        Returns:
+            Path to saved file
+        """
+        from pathlib import Path
+        import aiofiles
+        
+        # Use data/current structure like JSONStorageService
+        base_path = Path("data")
+        current_dir = base_path / "current" / "by_lender"
+        current_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Convert products to dict
+        products_data = [p.model_dump() for p in products]
+        
+        if lender:
+            file_path = current_dir / f"{lender}.json"
+        else:
+            file_path = base_path / "current" / "products.json"
+        
+        async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(products_data, indent=2, default=str))
+        
+        return str(file_path)
+    
+    async def save_snapshot(
+        self, 
+        products: List[LoanProduct], 
+        lender: str,
+        raw_html: Optional[Dict[str, str]] = None
+    ) -> Dict[str, str]:
+        """
+        Save historical snapshot of products (compatible with JSONStorageService interface).
+        
+        Args:
+            products: List of loan products
+            lender: Lender name
+            raw_html: Optional dict of {url: html_content} for raw snapshots
+            
+        Returns:
+            Dict with paths to saved files
+        """
+        from pathlib import Path
+        import aiofiles
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        saved_files = {}
+        base_path = Path("data")
+        
+        # Save parsed products
+        parsed_dir = base_path / "snapshots" / "parsed" / lender
+        parsed_dir.mkdir(parents=True, exist_ok=True)
+        parsed_file = parsed_dir / f"{timestamp}.json"
+        
+        products_data = [p.model_dump() for p in products]
+        async with aiofiles.open(parsed_file, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(products_data, indent=2, default=str))
+        saved_files['parsed'] = str(parsed_file)
+        
+        # Save raw HTML if provided
+        if raw_html:
+            raw_dir = base_path / "snapshots" / "raw" / lender / timestamp
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            
+            for i, (url, html_content) in enumerate(raw_html.items(), 1):
+                raw_file = raw_dir / f"page{i}.html"
+                async with aiofiles.open(raw_file, 'w', encoding='utf-8') as f:
+                    await f.write(html_content)
+                saved_files[f'raw_page{i}'] = str(raw_file)
+        
+        return saved_files
+    
+    async def update_index(
+        self,
+        lender: str,
+        status: str,
+        products_count: int,
+        snapshot_path: str
+    ) -> None:
+        """
+        Update the index.json catalog file (compatible with JSONStorageService interface).
+        
+        Args:
+            lender: Lender name
+            status: Collection status (success/failure)
+            products_count: Number of products collected
+            snapshot_path: Path to snapshot file
+        """
+        from pathlib import Path
+        import aiofiles
+        
+        index_file = Path("data") / "index.json"
+        index_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Load existing index
+        index_data = {}
+        if index_file.exists():
+            async with aiofiles.open(index_file, 'r', encoding='utf-8') as f:
+                content = await f.read()
+                if content.strip():
+                    index_data = json.loads(content)
+        
+        # Update index with new collection entry
+        index_data[lender] = {
+            "status": status,
+            "products_count": products_count,
+            "snapshot_path": snapshot_path,
+            "last_updated": datetime.now().isoformat()
+        }
+        
+        # Save updated index
+        async with aiofiles.open(index_file, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(index_data, indent=2, default=str))

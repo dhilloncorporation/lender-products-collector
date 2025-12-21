@@ -16,7 +16,7 @@ logging.basicConfig(
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from src.agents.discovery.google_search_discovery import GoogleSearchDiscovery
+from src.agents.discovery.search_discovery import SearchDiscovery
 
 
 async def test_cba_search():
@@ -25,7 +25,7 @@ async def test_cba_search():
     print("🔍 Testing Google Search with Playwright for CBA")
     print("="*80)
     
-    discovery = GoogleSearchDiscovery()
+    discovery = SearchDiscovery()
     
     # Test CBA discovery
     print("\n📡 Discovering CBA pages...\n")

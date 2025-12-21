@@ -1,0 +1,166 @@
+# Lender Products Collector - Hybrid Configuration
+# Externalize only what needs to change between environments
+# Implementation details are hardcoded in code
+
+# Core collection settings (tuning parameters)
+collection_settings:
+  max_retries: ${MAX_RETRIES:-3}
+  timeout_seconds: ${TIMEOUT_SECONDS:-30}
+  concurrent_collections: ${CONCURRENT_COLLECTIONS:-5}
+  rate_limit_per_minute: ${RATE_LIMIT_PER_MINUTE:-60}
+  default_frequency: "daily"
+  volatile_lenders_hourly: true
+
+# Feature flags (what to enable/disable)
+features:
+  google_search_enabled: ${GOOGLE_SEARCH_ENABLED:-true}
+  notifications_enabled: ${NOTIFICATIONS_ENABLED:-false}
+  debug_mode: ${DEBUG_MODE:-false}
+  firecrawl_enabled: ${FIRECRAWL_ENABLED:-false}
+
+# Environment-specific settings
+environment:
+  log_level: ${LOG_LEVEL:-INFO}
+  api_port: ${API_PORT:-8000}
+  data_path: "data/products"
+  timezone: "Australia/Sydney"
+
+# Rate limiting and timing controls (anti-blocking)
+rate_limits:
+  # Web Search timing (critical for avoiding blocks)
+  search_delay_seconds: ${SEARCH_DELAY_SECONDS:-15}  # Between searches (increased for human-like behavior)
+  search_between_queries_seconds: 20  # Between different search queries (increased)
+  search_daily_limit: 50  # Max searches per day (reduced to be more conservative)
+  
+  # Human-like behavior timing
+  human_like_delays: true  # Enable random delays
+  min_delay_seconds: 10    # Minimum delay between actions
+  max_delay_seconds: 30    # Maximum delay between actions
+  random_jitter: true      # Add random jitter to delays
+  
+  # Per-lender timing
+  per_lender_delay_seconds: 3  # Between different lenders
+  per_url_delay_seconds: 2  # Between URLs of same lender
+  
+  # Request-level timing
+  request_delay_ms: 1500  # Between individual requests
+  global_requests_per_minute: 30  # Reduced from 60
+  
+  # Backoff strategy (when blocked)
+  backoff_enabled: true
+  backoff_initial_delay_seconds: 60  # Start with 1 minute
+  backoff_max_delay_seconds: 1800  # Max 30 minutes
+  backoff_multiplier: 2  # Double delay each time
+  backoff_max_attempts: 5  # Give up after 5 attempts
+
+# Debug settings (development vs production)
+debug:
+  save_html: ${DEBUG_SAVE_HTML:-false}
+  save_screenshots: ${DEBUG_SAVE_SCREENSHOTS:-false}
+  output_path: "debug/outputs"
+
+# Notifications (only if enabled)
+notifications:
+  email:
+    smtp_server: ${SMTP_SERVER:-""}
+    smtp_port: ${SMTP_PORT:-587}
+    from_email: "noreply@lender-collector.com"
+    to_emails: []
+  slack:
+    webhook_url_env: "SLACK_WEBHOOK_URL"
+    channel: "#lender-collector"
+
+# AI/LLM settings (if using AI features)
+# Set OPENAI_API_KEY environment variable to enable AI features
+ai:
+  openai_model: ${OPENAI_MODEL:-gpt-4o-mini}  # Cheapest model: $0.00015/1K input, $0.0006/1K output
+  openai_api_key_env: "OPENAI_API_KEY"        # Environment variable name for API key
+  temperature: 0.1                            # Lower = more deterministic
+  max_tokens: 4000                            # Maximum response length
+
+# Web search engine configuration
+web_search:
+  # Primary search engine (choose one)
+  primary_engine: ${SEARCH_ENGINE:-google_custom_search}  # google_custom_search, google_playwright, yahoo, bing, duckduckgo, yandex
+  
+  # Google Custom Search API (preferred - compliant, fast, reliable)
+  google_custom_search:
+    name: "Google Custom Search API"
+    enabled: true
+    priority: 1
+    api_key_env: "CUSTOM_SEARCH_API_KEY"
+    search_engine_id_env: "CUSTOM_SEARCH_CX"
+    base_url: "https://www.googleapis.com/customsearch/v1"
+    daily_limit: 100
+    cost_per_1000: 5.00
+    timeout_seconds: 30
+    search_delay_seconds: 1  # Much faster than Playwright
+    between_queries_delay_seconds: 2
+    human_like_delays: false  # Not needed for API
+    random_jitter: false
+  
+  # Search engines configuration (fallback)
+  engines:
+    google_playwright:
+      name: "Google (Playwright)"
+      base_url: "https://www.google.com/search"
+      params: "q={query}&num={num}&hl={hl}&gl={gl}"
+      user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      timeout_seconds: 30
+      rate_limit_per_hour: 20
+      
+    yahoo:
+      name: "Yahoo"
+      base_url: "https://search.yahoo.com/search"
+      params: "p={query}&b={start}&n={num}"
+      user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      timeout_seconds: 15
+      rate_limit_per_hour: 120
+      
+    bing:
+      name: "Bing"
+      base_url: "https://www.bing.com/search"
+      params: "q={query}&count={num}&mkt={mkt}"
+      user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      timeout_seconds: 15
+      rate_limit_per_hour: 150
+      
+    duckduckgo:
+      name: "DuckDuckGo"
+      base_url: "https://duckduckgo.com/html"
+      params: "q={query}&kl={kl}"
+      user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      timeout_seconds: 20
+      rate_limit_per_hour: 200
+      
+    yandex:
+      name: "Yandex"
+      base_url: "https://yandex.com/search"
+      params: "text={query}&lr={lr}"
+      user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      timeout_seconds: 15
+      rate_limit_per_hour: 120
+  
+  # Fallback strategy
+  fallback_enabled: true
+  fallback_order: ["google_playwright", "yahoo", "bing", "duckduckgo", "yandex"]
+  
+  # Search templates for different content types
+  search_templates:
+    interest_rates: 'site:{domain} "home loan rates" OR "mortgage rates"'
+    products: 'site:{domain} "home loan products" OR "our home loans"'
+    comparison: 'site:{domain} "home loan" compare OR comparison'
+    fees: 'site:{domain} "home loan" fees OR charges'
+    rates_alt: 'site:{domain} inurl:rates "home loans"'
+    products_alt: 'site:{domain} inurl:"home-loans" intitle:"products"'
+
+# Data validation settings
+validation:
+  enabled: true
+  min_rate: 0.5
+  max_rate: 20.0
+  max_age_hours: 24
+
+# Metadata
+last_updated: "2024-09-30T15:30:00Z"
+version: "1.1.0"

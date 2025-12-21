@@ -1,4 +1,37 @@
-"""Playwright-based collector agent for loan products."""
+"""
+Collector Agent - Web Scraping and Data Extraction
+
+ROLE: Worker Agent (Data Collection)
+PURPOSE: Extracts loan product data from lender websites using Playwright
+
+This agent implements a multi-strategy extraction approach to handle different
+website structures. It tries strategies in order of reliability until one succeeds.
+
+EXTRACTION STRATEGIES (in order):
+1. Network Introspection - Captures JSON API responses (fastest, most reliable)
+2. JSON-LD Structured Data - Parses schema.org structured data
+3. Embedded JavaScript State - Extracts from window.__NEXT_DATA__, dataLayer, etc.
+4. Select Dropdowns - Parses rate dropdowns (ANZ-style pages)
+5. DOM Parsing - Fallback text-based extraction
+
+FEATURES:
+- Multi-strategy fallback (tries 5 different methods)
+- Network monitoring (captures API calls)
+- BIAN schema compliance (returns standardized LoanProduct objects)
+- Error resilience (continues if one strategy fails)
+- Async/await support (non-blocking operations)
+
+DEPENDENCIES:
+- Playwright (browser automation)
+- LoanProduct models (BIAN schema)
+
+USAGE:
+    async with PlaywrightCollectorAgent(headless=True) as collector:
+        products = await collector.collect_from_url(
+            url="https://example.com/rates",
+            lender_name="ANZ"
+        )
+"""
 
 import os
 import logging
@@ -6,6 +39,7 @@ import asyncio
 import re
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from decimal import Decimal
 from playwright.async_api import async_playwright, Browser, Page
 from ...models import LoanProduct, InterestComponent, FeeStructure, ProductFeatures, EligibilityCriteria
 
@@ -13,7 +47,34 @@ logger = logging.getLogger(__name__)
 
 
 class PlaywrightCollectorAgent:
-    """Agent that uses Playwright to collect loan product data from lender websites."""
+    """
+    Playwright-based collector agent for extracting loan product data.
+    
+    This agent uses Playwright to automate browser interactions and extract
+    loan product information from lender websites. It implements a smart
+    multi-strategy approach that adapts to different website structures.
+    
+    The agent tries extraction strategies in order of reliability:
+    1. Network introspection (captured JSON APIs) - Fastest, most reliable
+    2. JSON-LD structured data - Standardized schema.org format
+    3. Embedded JavaScript state - Next.js, Nuxt, GTM dataLayer
+    4. Select dropdowns - ANZ/CBA style rate dropdowns
+    5. DOM parsing - Fallback text-based extraction
+    
+    Attributes:
+        headless: Run browser in headless mode
+        timeout: Page load timeout in milliseconds
+        browser: Playwright browser instance
+        collected_products: List of collected products
+    
+    Example:
+        >>> async with PlaywrightCollectorAgent(headless=True) as collector:
+        ...     products = await collector.collect_from_url(
+        ...         url="https://www.anz.com.au/home-loans/interest-rates/",
+        ...         lender_name="ANZ"
+        ...     )
+        ...     print(f"Collected {len(products)} products")
+    """
     
     def __init__(self, headless: bool = True, timeout: int = 30000):
         """Initialize the collector agent."""
@@ -75,11 +136,35 @@ class PlaywrightCollectorAgent:
             logger.info(f"Collecting from {url}")
             # Use 'domcontentloaded' instead of 'networkidle' - more reliable
             await page.goto(url, wait_until='domcontentloaded', timeout=self.timeout)
-            # Wait for dynamic content and API calls
-            await page.wait_for_timeout(3000)
+            
+            # Detect page structure and wait appropriately for dynamic content
+            page_structure = await self._detect_page_structure(page)
+            logger.debug(f"   Detected page structure: {page_structure}")
+            
+            # Wait for dynamic content based on detected structure
+            if 'compare_cards' in page_structure or 'data_cell_rates' in page_structure:
+                # Wait for rate elements to populate (CommBank-style)
+                try:
+                    await page.wait_for_function(
+                        """() => {
+                            const rateElements = document.querySelectorAll('[data-cell="interest-rate"], [data-cell="comparison-rate"]');
+                            if (rateElements.length > 0) {
+                                return Array.from(rateElements).some(el => el.textContent.trim().length > 0);
+                            }
+                            return false;
+                        }""",
+                        timeout=10000
+                    )
+                    await page.wait_for_timeout(2000)  # Additional wait for API completion
+                except Exception as e:
+                    logger.debug(f"   Timeout waiting for rate elements: {e}")
+                    await page.wait_for_timeout(5000)  # Fallback wait
+            else:
+                # Standard wait for dynamic content and API calls
+                await page.wait_for_timeout(3000)
             
             # Try multiple extraction strategies
-            products = await self._smart_extract_products(page, lender_name, url, selectors, captured_apis)
+            products = await self._smart_extract_products(page, lender_name, url, selectors, captured_apis, page_structure)
             
         except Exception as e:
             logger.error(f"Error collecting from {url}: {str(e)}")
@@ -88,13 +173,147 @@ class PlaywrightCollectorAgent:
         
         return products
     
+    async def analyze_page_structure(self, url: str) -> Dict[str, Any]:
+        """
+        Analyze a page to determine the best extraction strategy.
+        
+        This is a public method that can be called by the workflow to analyze
+        page structure before collection. It returns recommended strategy and
+        available strategies.
+        
+        Args:
+            url: The URL to analyze
+            
+        Returns:
+            Dict with:
+                - recommended_strategy: Best strategy to use
+                - available_strategies: List of strategies found
+                - page_structure: Detected page structure details
+        """
+        if not self.browser:
+            raise RuntimeError("Browser not initialized. Use async context manager.")
+        
+        page = await self.browser.new_page()
+        try:
+            await page.goto(url, wait_until='domcontentloaded', timeout=self.timeout)
+            await page.wait_for_timeout(3000)  # Wait for dynamic content
+            
+            # Detect page structure
+            page_structure = await self._detect_page_structure(page)
+            
+            # Determine recommended strategy based on detected structure
+            strategies_found = []
+            recommended_strategy = "dom-parsing"  # Default fallback
+            
+            # Priority order: json-ld > embedded-state > select-dropdown > html-table > dom-parsing
+            if page_structure.get('json_ld'):
+                strategies_found.append("json-ld")
+                recommended_strategy = "json-ld"
+            
+            if page_structure.get('embedded_state'):
+                strategies_found.append("embedded-state")
+                if recommended_strategy == "dom-parsing":
+                    recommended_strategy = "embedded-state"
+            
+            if page_structure.get('select_dropdowns'):
+                strategies_found.append("select-dropdown")
+                if recommended_strategy not in ["json-ld", "embedded-state"]:
+                    recommended_strategy = "select-dropdown"
+            
+            if page_structure.get('compare_cards') or page_structure.get('data_cell_rates'):
+                strategies_found.append("compare-cards")
+                if recommended_strategy not in ["json-ld", "embedded-state", "select-dropdown"]:
+                    recommended_strategy = "compare-cards"
+            
+            # Check for HTML tables with rates
+            tables = await page.query_selector_all('table')
+            table_with_rates_count = 0
+            for table in tables:
+                text = await table.inner_text()
+                if re.search(r'([\d.]+)%\s*p\.a', text, re.IGNORECASE):
+                    table_with_rates_count += 1
+            if table_with_rates_count > 0:
+                strategies_found.append("html-table")
+                if recommended_strategy not in ["json-ld", "embedded-state", "select-dropdown", "compare-cards"]:
+                    recommended_strategy = "html-table"
+            
+            if not strategies_found:
+                strategies_found.append("dom-parsing")
+            
+            return {
+                "recommended_strategy": recommended_strategy,
+                "available_strategies": strategies_found,
+                "page_structure": page_structure
+            }
+        finally:
+            await page.close()
+    
+    async def _detect_page_structure(self, page: Page) -> Dict[str, bool]:
+        """
+        Analyze page structure to detect available extraction strategies.
+        
+        Returns a dict indicating which structures are present:
+        - compare_cards: CommBank-style compare cards with data-cell attributes
+        - data_cell_rates: Elements with data-cell="interest-rate" or "comparison-rate"
+        - select_dropdowns: Rate selection dropdowns
+        - json_ld: JSON-LD structured data
+        - embedded_state: JavaScript state objects
+        """
+        structure = {
+            'compare_cards': False,
+            'data_cell_rates': False,
+            'select_dropdowns': False,
+            'json_ld': False,
+            'embedded_state': False
+        }
+        
+        try:
+            # Check for compare cards (CommBank-style)
+            compare_cards = await page.query_selector_all('.compare-card, .compare-carditem, [class*="compare-card"]')
+            if compare_cards:
+                structure['compare_cards'] = True
+                logger.debug(f"   Found {len(compare_cards)} compare cards")
+            
+            # Check for data-cell rate attributes
+            data_cell_elements = await page.query_selector_all('[data-cell="interest-rate"], [data-cell="comparison-rate"]')
+            if data_cell_elements:
+                structure['data_cell_rates'] = True
+                logger.debug(f"   Found {len(data_cell_elements)} data-cell rate elements")
+            
+            # Check for select dropdowns
+            rate_selects = await page.query_selector_all('select[id*="rate"], select[id*="Rate"], select[class*="rate"]')
+            if rate_selects:
+                structure['select_dropdowns'] = True
+                logger.debug(f"   Found {len(rate_selects)} rate select dropdowns")
+            
+            # Check for JSON-LD
+            jsonld_scripts = await page.query_selector_all('script[type="application/ld+json"]')
+            if jsonld_scripts:
+                structure['json_ld'] = True
+                logger.debug(f"   Found {len(jsonld_scripts)} JSON-LD scripts")
+            
+            # Check for embedded state
+            has_state = await page.evaluate("""() => {
+                return !!(globalThis.__NEXT_DATA__ || globalThis.__NUXT__ || 
+                         globalThis.dataLayer || globalThis.Shopify);
+            }""")
+            if has_state:
+                structure['embedded_state'] = True
+                logger.debug("   Found embedded JavaScript state")
+        
+        except Exception as e:
+            logger.debug(f"Page structure detection failed: {e}")
+        
+        return structure
+    
     async def _smart_extract_products(
         self, 
         page: Page, 
         lender_name: str, 
         url: str, 
         selectors: Dict[str, str] = None,
-        captured_apis: List[Dict] = None
+        captured_apis: List[Dict] = None,
+        page_structure: Dict[str, bool] = None
     ) -> List[LoanProduct]:
         """
         Smart multi-strategy product extraction (ChatGPT approach).
@@ -106,45 +325,71 @@ class PlaywrightCollectorAgent:
         3. Select dropdowns - Reliable for ANZ-style pages
         4. DOM parsing - Fallback
         """
+        logger.debug("=" * 60)
+        logger.debug(f"🔄 [COLLECTOR] Starting multi-strategy extraction for {lender_name}")
+        logger.debug(f"   URL: {url}")
+        
         products = []
         captured_apis = captured_apis or []
         
         # Strategy 0: Network introspection - check captured JSON APIs
         if captured_apis:
-            logger.debug(f"Trying Strategy 0: Network introspection ({len(captured_apis)} APIs captured)")
+            logger.debug(f"   [STRATEGY 0] Trying Network introspection ({len(captured_apis)} APIs captured)")
             products = await self._extract_from_captured_apis(captured_apis, lender_name, url)
             if products:
-                logger.info(f"✅ Extracted {len(products)} products via captured JSON API")
+                logger.info(f"   ✅ [STRATEGY 0 SUCCESS] Extracted {len(products)} products via captured JSON API")
                 return products
+            else:
+                logger.debug(f"   ❌ [STRATEGY 0 FAILED] No products found in captured APIs")
         
         # Strategy 1: JSON-LD structured data
-        logger.debug("Trying Strategy 1: JSON-LD")
+        logger.debug("   [STRATEGY 1] Trying JSON-LD structured data")
         products = await self._extract_from_jsonld(page, lender_name, url)
         if products:
-            logger.info(f"✅ Extracted {len(products)} products via JSON-LD")
+            logger.info(f"   ✅ [STRATEGY 1 SUCCESS] Extracted {len(products)} products via JSON-LD")
             return products
+        else:
+            logger.debug(f"   ❌ [STRATEGY 1 FAILED] No JSON-LD products found")
         
         # Strategy 2: Embedded JavaScript state
-        logger.debug("Trying Strategy 2: Embedded state")
+        logger.debug("   [STRATEGY 2] Trying Embedded JavaScript state")
         products = await self._extract_from_embedded_state(page, lender_name, url)
         if products:
-            logger.info(f"✅ Extracted {len(products)} products via embedded state")
+            logger.info(f"   ✅ [STRATEGY 2 SUCCESS] Extracted {len(products)} products via embedded state")
             return products
+        else:
+            logger.debug(f"   ❌ [STRATEGY 2 FAILED] No embedded state products found")
+        
+        # Strategy 2.5: Compare cards with data-cell attributes (CommBank-style, but detected dynamically)
+        page_structure = page_structure or await self._detect_page_structure(page)
+        if page_structure.get('compare_cards') or page_structure.get('data_cell_rates'):
+            logger.debug("   [STRATEGY 2.5] Trying Compare cards with data-cell attributes")
+            products = await self._extract_from_compare_cards(page, lender_name, url)
+            if products:
+                logger.info(f"   ✅ [STRATEGY 2.5 SUCCESS] Extracted {len(products)} products via compare cards")
+                return products
+            else:
+                logger.debug(f"   ❌ [STRATEGY 2.5 FAILED] No compare card products found")
         
         # Strategy 3: Select dropdowns (ANZ, CBA use this)
-        logger.debug("Trying Strategy 3: Select dropdowns")
+        logger.debug("   [STRATEGY 3] Trying Select dropdowns")
         products = await self._extract_from_select_dropdowns(page, lender_name, url)
         if products:
-            logger.info(f"✅ Extracted {len(products)} products via select dropdown")
+            logger.info(f"   ✅ [STRATEGY 3 SUCCESS] Extracted {len(products)} products via select dropdown")
             return products
+        else:
+            logger.debug(f"   ❌ [STRATEGY 3 FAILED] No dropdown products found")
         
         # Strategy 4: Fallback to DOM parsing
-        logger.debug("Trying Strategy 4: DOM parsing (fallback)")
+        logger.debug("   [STRATEGY 4] Trying DOM parsing (fallback)")
         products = await self._extract_products(page, lender_name, url, selectors)
         if products:
-            logger.info(f"✅ Extracted {len(products)} products via DOM parsing")
+            logger.info(f"   ✅ [STRATEGY 4 SUCCESS] Extracted {len(products)} products via DOM parsing")
         else:
-            logger.warning(f"⚠️  No products found with any strategy")
+            logger.warning(f"   ⚠️  [ALL STRATEGIES FAILED] No products found with any strategy")
+        
+        logger.debug(f"   Final result: {len(products)} products extracted")
+        logger.debug("=" * 60)
         
         return products
     
@@ -532,6 +777,117 @@ class PlaywrightCollectorAgent:
         
         return products
     
+    async def _extract_from_compare_cards(self, page: Page, lender_name: str, url: str) -> List[LoanProduct]:
+        """
+        Extract products from compare cards with data-cell attributes (CommBank-style).
+        
+        Looks for:
+        - .compare-card or .compare-carditem elements
+        - Elements with data-cell="interest-rate" and data-cell="comparison-rate"
+        - Product names in card headers
+        """
+        products = []
+        
+        try:
+            # Find all compare cards
+            cards = await page.query_selector_all('.compare-card, .compare-carditem, [class*="compare-card"]')
+            
+            if not cards:
+                logger.debug("   No compare cards found")
+                return products
+            
+            logger.debug(f"   Found {len(cards)} compare cards")
+            
+            for card in cards:
+                try:
+                    # Extract product name from card header
+                    name_elem = await card.query_selector('h2, .compare-card-head h2, .head-content h2')
+                    if not name_elem:
+                        name_elem = await card.query_selector('.compare-card-head, .head-content')
+                    
+                    name = ""
+                    if name_elem:
+                        name = await name_elem.inner_text()
+                        name = name.strip()
+                    
+                    if not name:
+                        # Try to get from card ID or data attributes
+                        card_id = await card.get_attribute('id')
+                        if card_id:
+                            name = card_id.replace('-', ' ').replace('_', ' ').title()
+                    
+                    if not name:
+                        continue
+                    
+                    # Extract interest rate
+                    interest_rate_elem = await card.query_selector('[data-cell="interest-rate"]')
+                    interest_rate = 0.0
+                    if interest_rate_elem:
+                        rate_text = await interest_rate_elem.inner_text()
+                        rate_match = re.search(r'([\d.]+)', rate_text)
+                        if rate_match:
+                            interest_rate = float(rate_match.group(1))
+                    
+                    # Extract comparison rate
+                    comparison_rate_elem = await card.query_selector('[data-cell="comparison-rate"]')
+                    comparison_rate = interest_rate  # Default to interest rate
+                    if comparison_rate_elem:
+                        comp_rate_text = await comparison_rate_elem.inner_text()
+                        comp_rate_match = re.search(r'([\d.]+)', comp_rate_text)
+                        if comp_rate_match:
+                            comparison_rate = float(comp_rate_match.group(1))
+                    
+                    # Determine rate type from product name
+                    rate_type = "Variable"
+                    if "fixed" in name.lower() or "fix" in name.lower():
+                        rate_type = "Fixed"
+                    
+                    if interest_rate > 0:
+                        product = LoanProduct(
+                            product_id=f"{lender_name}-CC-{re.sub(r'[^a-zA-Z0-9]', '-', name)[:50]}",
+                            version="1.0",
+                            status="active",
+                            name=f"{lender_name} {name}",
+                            short_name=name,
+                            description=f"{name} from {lender_name}",
+                            purpose="OwnerOccupied_Purchase",
+                            channels=["Branch", "Online"],
+                            interest_components=[
+                                InterestComponent(
+                                    name=name,
+                                    rate_type=rate_type,
+                                    interest_rate_pct_au=interest_rate if interest_rate != comparison_rate else None,
+                                    comparison_rate_pct_au=comparison_rate,
+                                    applicability={}
+                                )
+                            ],
+                            fees=FeeStructure(),
+                            features=ProductFeatures(),
+                            eligibility=EligibilityCriteria(
+                                min_loan_amount_aud=20000,
+                                max_loan_amount_aud=2000000,
+                                min_age_years=18,
+                                residency=["AustralianCitizen", "PermanentResident"],
+                                borrower_types=["Individual"],
+                                occupancy=["OwnerOccupied"],
+                                max_lvr_by_segment=[{"segment": "OwnerOccupied", "maxLVR": 0.80}],
+                                property_types_allowed=["House", "Apartment", "Townhouse"]
+                            ),
+                            lender=lender_name,
+                            source_url=url
+                        )
+                        products.append(product)
+                        logger.debug(f"   Extracted from compare card: {name} ({interest_rate}%)")
+                
+                except Exception as e:
+                    logger.debug(f"   Failed to extract from compare card: {e}")
+                    continue
+        
+        except Exception as e:
+            logger.debug(f"Compare card extraction failed: {e}")
+        
+        return products
+    
     async def _extract_from_select_dropdowns(self, page: Page, lender_name: str, url: str) -> List[LoanProduct]:
         """
         Extract products from select dropdowns (ANZ-style).
@@ -540,10 +896,18 @@ class PlaywrightCollectorAgent:
         <select id="...InterestRate...">
           <option>6.49% p.a Standard Variable 80% or less LVR</option>
         </select>
+        
+        Also checks for LVR tier tables that may be on the same page.
         """
         products = []
         
         try:
+            # First, check for LVR tier tables (e.g., ANZ rate tables with multiple LVR tiers)
+            lvr_tier_products = await self._extract_lvr_tier_tables(page, lender_name, url)
+            if lvr_tier_products:
+                products.extend(lvr_tier_products)
+                logger.info(f"Found {len(lvr_tier_products)} products from LVR tier tables")
+            
             # Find select elements that might contain rates
             rate_selects = await page.query_selector_all('select[id*="Interest"], select[id*="interest"], select[id*="rate"], select[id*="Rate"]')
             
@@ -620,7 +984,11 @@ class PlaywrightCollectorAgent:
                         name=product_name,
                         rate_type=rate_type,
                         comparison_rate_pct_au=rate,
-                        applicability={}
+                        applicability={
+                            "lvr_tier": lvr_text if lvr_text else None,
+                            "lvr_max": lvr_value,
+                            "lvr_min": 0.0 if lvr_text and "or less" in lvr_text.lower() else None
+                        } if lvr_text else {}
                     )
                 ],
                 fees=FeeStructure(),
@@ -643,6 +1011,186 @@ class PlaywrightCollectorAgent:
             
         except Exception as e:
             logger.debug(f"Failed to parse dropdown option '{text}': {e}")
+            return None
+    
+    async def _extract_lvr_tier_tables(self, page: Page, lender_name: str, url: str) -> List[LoanProduct]:
+        """
+        Extract products from LVR tier tables (e.g., ANZ rate tables).
+        
+        Looks for tables with structure:
+        LVR Tier | Comparison Rate (p.a.)
+        ≤ 60%    | 5.65%
+        ≤ 70%    | 5.70%
+        ≤ 80%    | 5.80%
+        ≤ 90%    | 6.34%
+        > 90%    | 6.89%
+        Index rate | 7.24%
+        """
+        products = []
+        
+        try:
+            # Find tables that might contain LVR tier data
+            tables = await page.query_selector_all('table')
+            
+            for table in tables:
+                table_text = await table.inner_text()
+                
+                # Check if table contains LVR tier indicators
+                if not (('lvr' in table_text.lower() or 'loan to value' in table_text.lower()) and 
+                        ('rate' in table_text.lower() or '%' in table_text)):
+                    continue
+                
+                # Extract table rows
+                rows = await table.query_selector_all('tr')
+                if len(rows) < 2:  # Need at least header + 1 data row
+                    continue
+                
+                # Try to find header row
+                header_row = rows[0]
+                header_text = await header_row.inner_text()
+                
+                # Check if this looks like an LVR tier table
+                if 'lvr' not in header_text.lower() and 'tier' not in header_text.lower():
+                    continue
+                
+                # Extract LVR tiers from data rows
+                lvr_tiers = []
+                product_name = None
+                
+                for row in rows[1:]:  # Skip header
+                    cells = await row.query_selector_all('td, th')
+                    if len(cells) < 2:
+                        continue
+                    
+                    tier_text = await cells[0].inner_text()
+                    rate_text = await cells[1].inner_text()
+                    
+                    # Parse LVR tier (e.g., "≤ 60%", "> 90%", "Index rate")
+                    tier_match = re.search(r'([≤<>]|Index)\s*([\d]+)?%?', tier_text)
+                    rate_match = re.search(r'([\d.]+)%', rate_text)
+                    
+                    if tier_match and rate_match:
+                        operator = tier_match.group(1)
+                        tier_value = tier_match.group(2)
+                        rate = float(rate_match.group(1))
+                        
+                        # Determine LVR range
+                        if operator == "Index" or tier_text.lower() == "index rate":
+                            lvr_tiers.append({
+                                "tier": "Index rate",
+                                "rate": rate,
+                                "lvr_min": 0.0,
+                                "lvr_max": 1.0,
+                                "is_index": True
+                            })
+                        elif operator == "≤":
+                            max_lvr = float(tier_value) / 100 if tier_value else 1.0
+                            # Find previous tier's max to determine min
+                            prev_max = 0.0
+                            for existing_tier in lvr_tiers:
+                                if existing_tier.get("lvr_max", 0) > prev_max:
+                                    prev_max = existing_tier.get("lvr_max", 0)
+                            
+                            lvr_tiers.append({
+                                "tier": f"≤ {tier_value}%",
+                                "rate": rate,
+                                "lvr_min": prev_max,
+                                "lvr_max": max_lvr,
+                                "lvr_exclusive_max": False
+                            })
+                        elif operator == ">":
+                            min_lvr = float(tier_value) / 100 if tier_value else 0.0
+                            lvr_tiers.append({
+                                "tier": f"> {tier_value}%",
+                                "rate": rate,
+                                "lvr_min": min_lvr,
+                                "lvr_max": 1.0,
+                                "lvr_exclusive_max": True
+                            })
+                
+                # If we found LVR tiers, create a product with multiple interest components
+                if lvr_tiers and len(lvr_tiers) > 1:
+                    # Try to get product name from page context
+                    product_name = await self._extract_product_name_from_context(page, table)
+                    if not product_name:
+                        product_name = f"{lender_name} Variable Rate"
+                    
+                    # Create interest components for each LVR tier
+                    interest_components = []
+                    for tier in lvr_tiers:
+                        component_name = f"{product_name} - {tier['tier']}"
+                        rate_type = "VariableIndex" if tier.get("is_index") else "Variable"
+                        
+                        interest_components.append(
+                            InterestComponent(
+                                name=component_name,
+                                rate_type=rate_type,
+                                comparison_rate_pct_au=Decimal(str(tier["rate"])),
+                                applicability={
+                                    "lvr_tier": tier["tier"],
+                                    "lvr_min": tier["lvr_min"],
+                                    "lvr_max": tier["lvr_max"],
+                                    "lvr_exclusive_max": tier.get("lvr_exclusive_max", False)
+                                }
+                            )
+                        )
+                    
+                    # Create product with multiple LVR tier components
+                    product = LoanProduct(
+                        product_id=f"{lender_name}-{re.sub(r'[^a-zA-Z0-9]', '-', product_name)[:50]}",
+                        version="1.0",
+                        status="active",
+                        name=f"{lender_name} {product_name}",
+                        short_name=product_name,
+                        description=f"{product_name} with LVR tiered rates from {lender_name}",
+                        purpose="OwnerOccupied_Purchase",
+                        channels=["Branch", "Online"],
+                        interest_components=interest_components,
+                        fees=FeeStructure(),
+                        features=ProductFeatures(),
+                        eligibility=EligibilityCriteria(
+                            min_loan_amount_aud=20000,
+                            max_loan_amount_aud=2000000,
+                            min_age_years=18,
+                            residency=["AustralianCitizen", "PermanentResident"],
+                            borrower_types=["Individual"],
+                            occupancy=["OwnerOccupied"],
+                            max_lvr_by_segment=[{"segment": "OwnerOccupied", "maxLVR": 0.95}],
+                            property_types_allowed=["House", "Apartment", "Townhouse"]
+                        ),
+                        lender=lender_name,
+                        source_url=url
+                    )
+                    products.append(product)
+                    logger.debug(f"   Extracted product with {len(lvr_tiers)} LVR tiers: {product_name}")
+        
+        except Exception as e:
+            logger.debug(f"LVR tier table extraction failed: {e}")
+        
+        return products
+    
+    async def _extract_product_name_from_context(self, page: Page, table_element) -> Optional[str]:
+        """Extract product name from page context around a table."""
+        try:
+            # Look for headings before the table
+            table_parent = await table_element.evaluate_handle('el => el.closest("div, section, article")')
+            if table_parent:
+                # Check for headings in the same container
+                headings = await table_parent.query_selector_all('h1, h2, h3, h4')
+                for heading in headings:
+                    heading_text = await heading.inner_text()
+                    if heading_text and len(heading_text) < 100:  # Reasonable length
+                        return heading_text.strip()
+            
+            # Fallback: look for product name in table caption
+            caption = await table_element.query_selector('caption')
+            if caption:
+                caption_text = await caption.inner_text()
+                if caption_text:
+                    return caption_text.strip()
+            
+            return None
+        except Exception:
             return None
     
     async def _extract_products(self, page: Page, lender_name: str, url: str, selectors: Dict[str, str] = None) -> List[LoanProduct]:

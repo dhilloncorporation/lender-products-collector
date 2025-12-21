@@ -130,6 +130,77 @@ class LoanProduct(BaseModel):
         if self.eligibility.max_lvr_by_segment:
             return max(segment.get("maxLVR", 0) * 100 for segment in self.eligibility.max_lvr_by_segment)
         return Decimal("95.0")
+    
+    def get_rate_by_lvr(self, lvr: Decimal) -> Optional[Decimal]:
+        """
+        Get interest rate for a specific LVR.
+        
+        Args:
+            lvr: Loan-to-Value Ratio as decimal (e.g., 0.80 for 80%)
+            
+        Returns:
+            Comparison rate for the LVR tier, or None if not found
+        """
+        # Normalize LVR to decimal (handle percentage input)
+        if lvr > 1.0:
+            lvr = lvr / 100
+        
+        # Find matching LVR tier
+        for component in self.interest_components:
+            applicability = component.applicability
+            if "lvr_min" in applicability and "lvr_max" in applicability:
+                lvr_min = Decimal(str(applicability["lvr_min"]))
+                lvr_max = Decimal(str(applicability["lvr_max"]))
+                lvr_exclusive_max = applicability.get("lvr_exclusive_max", False)
+                
+                # Check if LVR falls within this tier
+                if lvr_exclusive_max:
+                    if lvr_min <= lvr < lvr_max:
+                        return component.comparison_rate_pct_au
+                else:
+                    if lvr_min <= lvr <= lvr_max:
+                        return component.comparison_rate_pct_au
+        
+        # Fallback to first component if no LVR tier matches
+        return self.rate_percent
+    
+    def get_lvr_tiers(self) -> List[Dict[str, Any]]:
+        """
+        Get all LVR tiers for this product.
+        
+        Returns:
+            List of dictionaries with tier information:
+            [
+                {
+                    "tier": "≤80%",
+                    "rate": Decimal("6.49"),
+                    "lvr_min": 0.0,
+                    "lvr_max": 0.80
+                },
+                ...
+            ]
+        """
+        tiers = []
+        for component in self.interest_components:
+            applicability = component.applicability
+            if "lvr_tier" in applicability or ("lvr_min" in applicability and "lvr_max" in applicability):
+                tier_info = {
+                    "tier": applicability.get("lvr_tier", ""),
+                    "rate": component.comparison_rate_pct_au,
+                    "lvr_min": applicability.get("lvr_min"),
+                    "lvr_max": applicability.get("lvr_max"),
+                    "rate_type": component.rate_type,
+                    "component_name": component.name
+                }
+                tiers.append(tier_info)
+        
+        # Sort by LVR min if available
+        tiers.sort(key=lambda x: x.get("lvr_min", 0) or 0)
+        return tiers
+    
+    def has_lvr_tiers(self) -> bool:
+        """Check if product has multiple LVR tiers."""
+        return len(self.get_lvr_tiers()) > 1
 
 
 class ProductMatch(BaseModel):

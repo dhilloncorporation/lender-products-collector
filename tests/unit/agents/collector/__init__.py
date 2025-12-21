@@ -1,0 +1,3 @@
+"""Collector agent tests package."""
+
+
