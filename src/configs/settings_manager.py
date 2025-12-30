@@ -181,6 +181,7 @@ class YamlSettingsManager:
         self.notifications: Optional[Notifications] = None
         self.ai: Optional[AI] = None
         self.validation: Optional[Validation] = None
+        self._raw_config: Optional[Dict[str, Any]] = None  # Store raw config for access
         
         self._load_all_settings()
     
@@ -211,6 +212,9 @@ class YamlSettingsManager:
         try:
             # Load main configuration
             config_data = self._load_yaml_file("collection_settings.yaml")
+            
+            # Store raw config for access
+            self._raw_config = config_data
             
             # Load each settings section
             self.collection_settings = CollectionSettings(**config_data["collection_settings"])
@@ -301,6 +305,10 @@ class YamlSettingsManager:
     def get_validation(self) -> Validation:
         """Get data validation settings."""
         return self.validation
+    
+    def get_schema(self) -> Dict[str, Any]:
+        """Get schema configuration (version, format)."""
+        return self._raw_config.get('schema', {'version': '2.0.0', 'format': 'state_explicit'})
     
     def get_web_search(self) -> WebSearch:
         """Get web search settings."""

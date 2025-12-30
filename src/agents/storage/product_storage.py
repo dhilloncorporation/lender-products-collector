@@ -300,14 +300,18 @@ class ProductStorageAgent:
     async def save_current_products(
         self, 
         products: List[LoanProduct], 
-        lender: Optional[str] = None
+        lender: Optional[str] = None,
+        schema_version: str = "2.0.0"
     ) -> str:
         """
-        Save current products to JSON file (compatible with JSONStorageService interface).
+        Save current products to JSON file with specified schema version.
         
         Args:
             products: List of loan products to save
             lender: If provided, saves to lender-specific file
+            schema_version: Schema version to use:
+                - "2.0.0": State-explicit format (default) - explicit pricing_states array
+                - "1.0.0": Hierarchical format - nested loan_types → repayment_types
             
         Returns:
             Path to saved file
@@ -320,8 +324,15 @@ class ProductStorageAgent:
         current_dir = base_path / "current" / "by_lender"
         current_dir.mkdir(parents=True, exist_ok=True)
         
-        # Convert products to dict
-        products_data = [p.model_dump() for p in products]
+        # Convert products based on schema version
+        if schema_version == "2.0.0":
+            # v2.0.0: State-explicit format with pricing_states array
+            products_data = [p.to_state_explicit_json() for p in products]
+            format_name = "state-explicit"
+        else:
+            # v1.0.0: Hierarchical format (backward compatibility)
+            products_data = [p.to_hierarchical_json() for p in products]
+            format_name = "hierarchical"
         
         if lender:
             file_path = current_dir / f"{lender}.json"
@@ -331,6 +342,7 @@ class ProductStorageAgent:
         async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
             await f.write(json.dumps(products_data, indent=2, default=str))
         
+        logger.info(f"Saved {len(products_data)} products in {format_name} format (v{schema_version}) to {file_path}")
         return str(file_path)
     
     async def save_snapshot(

@@ -2,6 +2,12 @@
 # Externalize only what needs to change between environments
 # Implementation details are hardcoded in code
 
+# Schema configuration (v2.0.0 = state-explicit, v1.0.0 = hierarchical)
+schema:
+  version: "2.0.0"  # Use state-explicit schema by default
+  format: "state_explicit"  # state_explicit or hierarchical
+  description: "v2.0.0 uses explicit pricing_states array; v1.0.0 uses nested loan_types structure"
+
 # Core collection settings (tuning parameters)
 collection_settings:
   max_retries: ${MAX_RETRIES:-3}

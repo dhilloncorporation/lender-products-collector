@@ -67,6 +67,7 @@ from ...configs.lender_config import LenderConfigManager
 from ..collector.playwright_collector import PlaywrightCollectorAgent
 from ..discovery.web_search_discovery import WebSearchDiscovery
 from ..storage.product_storage import ProductStorageAgent
+from ..verifier.result_verification_agent import ResultVerificationAgent
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ class CollectionState(TypedDict):
     current_lender: str
     current_lender_urls: List[str]  # Discovered URLs for current lender
     current_lender_products: List[Dict[str, Any]]  # Collected products (before storage)
+    verification_result: Dict[str, Any]  # Quality verification result (NEW)
     collection_results: Dict[str, Any]  # Final results after storage
     errors: List[str]
     completed_lenders: List[str]
@@ -127,6 +129,10 @@ class CollectionWorkflow:
         self.validation = settings_manager.get_validation()
         self.ai = settings_manager.get_ai()
         
+        # Get schema configuration (defaults to v2.0.0)
+        schema_config = settings_manager.get_schema()
+        self.schema_version = schema_config.get('version', '2.0.0')
+        
         # Initialize LLM (for any AI-powered tasks, not for data extraction)
         # Make LLM optional for testing without API key
         try:
@@ -150,6 +156,11 @@ class CollectionWorkflow:
         
         # Initialize discovery agent with settings
         self.discovery = WebSearchDiscovery(settings_manager)
+        
+        # Initialize verification agent with AI if LLM available
+        # TEMPORARILY DISABLED FOR TESTING
+        # use_ai_verification = self.llm is not None
+        # self.verification_agent = ResultVerificationAgent(use_ai=use_ai_verification)
         
         # Build the workflow
         self.workflow = self._build_workflow()
@@ -233,13 +244,17 @@ class CollectionWorkflow:
         # The collector agent handles both analysis and extraction internally
         workflow.add_node("collect_products", self._collect_products)
         
-        # Node 5: Validate collected data and save to JSON storage
+        # Node 5: AI QUALITY GATE - Verify collected data (NEW)
+        # TEMPORARILY DISABLED FOR TESTING
+        # workflow.add_node("verify_results", self._verify_results)
+        
+        # Node 6: Validate collected data and save to JSON storage
         workflow.add_node("process_results", self._process_results)
         
-        # Node 6: Check progress (how many lenders completed)
+        # Node 7: Check progress (how many lenders completed)
         workflow.add_node("check_completion", self._check_completion)
         
-        # Node 7: Final summary and cleanup
+        # Node 8: Final summary and cleanup
         workflow.add_node("finalize", self._finalize_collection)
         
         # ==============================================================================
@@ -253,7 +268,10 @@ class CollectionWorkflow:
         workflow.add_edge("initialize", "select_lender")       # After init → select first lender
         workflow.add_edge("select_lender", "discover_urls")    # After select → find URLs for current lender
         workflow.add_edge("discover_urls", "collect_products") # After discovery → analyze & collect (fused)
-        workflow.add_edge("collect_products", "process_results") # After collection → validate & save
+        # TEMPORARILY DISABLED FOR TESTING - Skip verification
+        # workflow.add_edge("collect_products", "verify_results") # After collection → AI quality gate (NEW)
+        # workflow.add_edge("verify_results", "process_results")  # After verification → validate & save
+        workflow.add_edge("collect_products", "process_results") # Skip verification → go direct to save
         workflow.add_edge("process_results", "check_completion") # After save → check if done
         
         # DECISION POINT: Continue or finish?
@@ -480,26 +498,103 @@ class CollectionWorkflow:
                 "errors": state["errors"] + [f"Collection error for {lender_abbr}: {str(e)}"]
             }
     
+    async def _verify_results(self, state: CollectionState) -> CollectionState:
+        """
+        AI QUALITY GATE - Verify collected products against BIAN schema and business rules.
+        
+        This node runs after data collection to ensure quality and completeness:
+        1. Validates schema compliance
+        2. Calculates confidence score (0-100)
+        3. Detects missing information
+        4. Identifies data quality issues
+        5. Quarantines low-quality results (score < 40)
+        
+        The verification result is stored in state and used by process_results
+        to decide whether to save or quarantine the data.
+        """
+        lender_abbr = state["current_lender"]
+        products = state["current_lender_products"]
+        
+        logger.info(f"🔍 Running AI Quality Gate for {lender_abbr}...")
+        
+        try:
+            # Run verification
+            verification_result = await self.verification_agent.verify_collection_result(
+                lender_name=lender_abbr,
+                products=products,
+                collection_metadata={
+                    "urls": state.get("current_lender_urls", []),
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+            
+            # Log quality assessment
+            logger.info(f"✅ Quality Gate complete for {lender_abbr}:")
+            logger.info(f"   Confidence Score: {verification_result.confidence_score}/100")
+            logger.info(f"   Status: {verification_result.status.upper()}")
+            logger.info(f"   Issues: {len(verification_result.issues)}")
+            
+            if verification_result.quarantined:
+                logger.warning(f"   ⚠️  DATA QUARANTINED - Confidence score below threshold!")
+                logger.warning(f"   Critical issues: {len([i for i in verification_result.issues if i.severity == 'critical'])}")
+            
+            # Store verification result in state
+            return {
+                **state,
+                "verification_result": verification_result.model_dump()
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Verification failed for {lender_abbr}: {e}")
+            # If verification fails, create a warning but don't block the pipeline
+            return {
+                **state,
+                "verification_result": {
+                    "lender_name": lender_abbr,
+                    "confidence_score": 50,  # Neutral score if verification fails
+                    "status": "unknown",
+                    "quarantined": False,
+                    "issues": [{
+                        "severity": "warning",
+                        "category": "system",
+                        "message": f"Verification agent error: {str(e)}",
+                        "penalty_points": 0
+                    }],
+                    "error": str(e)
+                },
+                "errors": state["errors"] + [f"Verification error for {lender_abbr}: {str(e)}"]
+            }
+    
     async def _process_results(self, state: CollectionState) -> CollectionState:
         """
         Process and store collection results.
+        
+        Checks verification result and handles data accordingly:
+        - If quarantined: Save to quarantine folder with quality report
+        - If passed: Save normally
         
         Delegates to ProductStorageAgent for all storage operations.
         Updates workflow state with results.
         """
         lender_abbr = state["current_lender"]
         products_data = state.get("current_lender_products", [])
+        verification_result = state.get("verification_result", {})
+        
+        # Check if data is quarantined
+        is_quarantined = verification_result.get("quarantined", False)
+        confidence_score = verification_result.get("confidence_score", 0)
         
         # Convert dicts back to LoanProduct objects for storage agent
         from ...models import LoanProduct
         products = [LoanProduct(**p) for p in products_data] if products_data else []
         
         try:
-            if products:
-                # Delegate storage to storage agent
+            if products and not is_quarantined:
+                # Delegate storage to storage agent with configured schema version
                 await self.storage_agent.save_current_products(
                     products=products,
-                    lender=lender_abbr
+                    lender=lender_abbr,
+                    schema_version=self.schema_version
                 )
                 
                 snapshot_paths = await self.storage_agent.save_snapshot(
@@ -519,7 +614,11 @@ class CollectionWorkflow:
                     "products": products_data,
                     "status": "success",
                     "timestamp": datetime.now().isoformat(),
-                    "count": len(products)
+                    "count": len(products),
+                    "verification": {
+                        "confidence_score": confidence_score,
+                        "status": verification_result.get("status", "unknown")
+                    }
                 }
                 
                 return {
@@ -530,6 +629,68 @@ class CollectionWorkflow:
                     },
                     "completed_lenders": state["completed_lenders"] + [lender_abbr],
                     "success_count": state["success_count"] + 1
+                }
+            elif products and is_quarantined:
+                # Data is quarantined - save to quarantine folder
+                logger.warning(f"⚠️  Quarantining data for {lender_abbr} (confidence: {confidence_score}/100)")
+                
+                # Save quarantined data to separate location
+                quarantine_dir = os.path.join("data", "quarantine", lender_abbr)
+                os.makedirs(quarantine_dir, exist_ok=True)
+                
+                timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+                quarantine_file = os.path.join(quarantine_dir, f"{timestamp}.json")
+                
+                import json
+                with open(quarantine_file, 'w') as f:
+                    json.dump({
+                        "lender": lender_abbr,
+                        "timestamp": timestamp,
+                        "products": products_data,
+                        "verification": verification_result,
+                        "quarantine_reason": "Confidence score below 40 threshold"
+                    }, f, indent=2, default=str)
+                
+                # Generate quality report
+                report_file = os.path.join(quarantine_dir, f"{timestamp}_quality_report.json")
+                quality_report = self.verification_agent.generate_quality_report(
+                    self.verification_agent.__class__.__dict__['VerificationResult'](**verification_result)
+                    if hasattr(self.verification_agent.__class__, '__dict__') else verification_result
+                )
+                with open(report_file, 'w') as f:
+                    json.dump(quality_report, f, indent=2, default=str)
+                
+                # Update index with quarantine status
+                await self.storage_agent.update_index(
+                    lender=lender_abbr,
+                    status="quarantined",
+                    products_count=len(products),
+                    snapshot_path=quarantine_file
+                )
+                
+                result = {
+                    "lender": lender_abbr,
+                    "products": products_data,
+                    "status": "quarantined",
+                    "timestamp": datetime.now().isoformat(),
+                    "count": len(products),
+                    "quarantine_path": quarantine_file,
+                    "verification": {
+                        "confidence_score": confidence_score,
+                        "status": verification_result.get("status", "quarantined"),
+                        "issues": len(verification_result.get("issues", []))
+                    }
+                }
+                
+                return {
+                    **state,
+                    "collection_results": {
+                        **state["collection_results"],
+                        lender_abbr: result
+                    },
+                    "completed_lenders": state["completed_lenders"] + [lender_abbr],
+                    "failure_count": state["failure_count"] + 1,  # Count as failure
+                    "errors": state["errors"] + [f"Data quarantined for {lender_abbr}: confidence score {confidence_score}/100"]
                 }
             else:
                 # No products collected

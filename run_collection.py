@@ -69,6 +69,8 @@ See Also:
 
 import asyncio
 import logging
+import argparse
+from typing import Dict, Any
 
 # Load .env file (simple approach)
 import load_env
@@ -84,6 +86,10 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# Concurrency settings
+# Set to 3 for laptops, 5-10 for powerful servers/cloud
+DEFAULT_CONCURRENCY = 3
 
 
 async def main():

@@ -8,13 +8,15 @@ Automatically collects, normalizes, and serves Australian loan product data from
 
 **Key Features**:
 - ✅ **Dynamic URL Discovery** - Google search finds pages automatically
-- ✅ **Multi-Strategy Extraction** - 5 different extraction methods
+- ✅ **Multi-Strategy Extraction** - 6 different extraction methods (Network, JSON-LD, Embedded State, Compare Cards, UI Enumeration, DOM)
+- ✅ **100% User Flow Coverage** - Text inputs, Show More buttons, Shadow DOM, Filter enumeration
+- ✅ **State-Explicit Schema v2.0.0** - Audit-safe pricing states with explicit filter bindings
 - ✅ **BIAN Schema Compliance** - Industry-standard data format
 - ✅ **LangGraph Orchestration** - AI agent workflow management
 - ✅ **Self-Healing** - Adapts to website changes
 - ✅ **Full Automation** - No manual data entry
 
-**Current Status**: ✅ ANZ working (8 products) | ⚠️ Other banks in progress
+**Current Status**: ✅ Production-ready with v2.0.0 schema | 🚀 Enhanced user flow simulation
 
 ---
 

@@ -1,0 +1,448 @@
+# Filter Detection Keywords Configuration
+# Version: 1.0.0
+# Last Updated: 2025-12-22
+#
+# Centralized keyword definitions for generic filter detection across all lenders.
+# These keywords are used to identify loan type, repayment type, and other filters
+# on lender websites without hardcoding bank-specific patterns.
+#
+# DESIGN PRINCIPLES:
+# - Generic patterns only (no bank-specific keywords)
+# - Versioned for safe evolution
+# - Add new categories only when seeing repeated misses across multiple lenders
+# - Log unmatched filters for later review
+# - Keep lean - avoid bloat
+#
+# INTENTIONALLY EXCLUDED (by design):
+# - Borrower profile filters (PAYG, SMSF, guarantor) - rare, eligibility-gated
+# - Promotional filters (special offer, cashback) - better as offer metadata
+# - Currency/country filters - out of scope for AU-focused system
+# - Hardcoded bank names - never add these
+# - UI-specific selectors - never add these
+# - Filter order assumptions - never add these
+
+# ============================================================================
+# LOAN TYPE KEYWORDS
+# ============================================================================
+# Keywords that identify loan purpose/type filters
+# These detect filters for: Owner Occupied, Investment, etc.
+
+loan_type:
+  # Specific phrases (highest priority - exact matches)
+  phrases:
+    - "home to live"
+    - "home to live in"
+    - "owner occup"
+    - "owner-occup"
+    - "owner occupier"
+    - "investment property"
+    - "invest property"
+  
+  # Generic patterns (for flexible matching)
+  patterns:
+    - "home"
+    - "house"
+    - "residential"
+    - "owner"
+    - "occup"
+    - "live"
+    - "investment"
+    - "invest"
+    - "property"
+    - "purchase"
+    - "refinance"
+  
+  # Exclude these false positives (navigation, page content, etc.)
+  exclusions:
+    - "home loan rates"
+    - "what are"
+    - "buy a property"
+    - "a home"
+    - "institutional"
+    - "insights"
+    - "solutions"
+    - "important information"
+    - "contact"
+    - "about"
+    - "help"
+    - "login"
+    - "search"
+    - "menu"
+    - "navigation"
+  
+  # Keywords used to identify filter labels (not filter options)
+  label_keywords:
+    - "loan type"
+    - "loan purpose"
+    - "property type"
+    - "property purpose"
+  
+  # Maximum words allowed for filter options (short phrases)
+  max_words: 4
+
+# ============================================================================
+# REPAYMENT TYPE KEYWORDS
+# ============================================================================
+# Keywords that identify repayment method filters
+# These detect filters for: Principal & Interest, Interest Only, etc.
+
+repayment_type:
+  # Specific phrases (highest priority - exact matches)
+  phrases:
+    - "principal & interest"
+    - "principal and interest"
+    - "principal & int"
+    - "interest only"
+    - "interest-only"
+  
+  # Generic patterns
+  patterns:
+    - "principal"
+    - "interest"
+    - "p&i"
+    - "p and i"
+    - "p+i"
+    - "io"
+    - "repayment"
+  
+  # Exclude false positives
+  exclusions:
+    - "institutional"
+    - "insights"
+    - "solutions"
+    - "important information"
+    - "contact"
+    - "about"
+    - "help"
+    - "login"
+    - "search"
+    - "menu"
+    - "navigation"
+    - "additional charges"  # Often appears in navigation but not a filter
+  
+  # Keywords used to identify filter labels
+  label_keywords:
+    - "repayment type"
+    - "repayment"
+    - "repay"
+  
+  # Maximum words allowed for filter options
+  max_words: 5
+
+# ============================================================================
+# LVR TIER KEYWORDS
+# ============================================================================
+# Keywords that identify Loan-to-Value Ratio filters
+
+lvr_tier:
+  keywords:
+    - "lvr"
+    - "loan to value"
+    - "ltv"
+    - "value ratio"
+    - "%"
+
+# ============================================================================
+# LOAN TERM KEYWORDS
+# ============================================================================
+# Keywords that identify loan term/duration filters
+
+loan_term:
+  keywords:
+    - "term"
+    - "fixed"
+    - "year"
+    - "month"
+    - "duration"
+    - "period"
+
+# ============================================================================
+# RATE TYPE KEYWORDS
+# ============================================================================
+# Keywords that identify rate type filters (Fixed vs Variable)
+# Many lenders expose rate type as a primary filter
+
+rate_type:
+  phrases:
+    - "fixed rate"
+    - "variable rate"
+    - "split rate"
+    - "introductory rate"
+    - "honeymoon rate"
+    - "intro rate"
+  
+  patterns:
+    - "fixed"
+    - "variable"
+    - "split"
+    - "introductory"
+    - "honeymoon"
+    - "intro"
+  
+  label_keywords:
+    - "rate type"
+    - "interest rate type"
+    - "rate"
+  
+  max_words: 3
+
+# ============================================================================
+# LOAN PURPOSE VARIANTS
+# ============================================================================
+# Additional loan purpose filters beyond basic owner/investment
+# Common lender terms that appear as separate tabs/filters
+
+loan_purpose:
+  phrases:
+    - "first home buyer"
+    - "first home"
+    - "owner occupied refinance"
+    - "investment refinance"
+    - "construction loan"
+    - "construction"
+    - "land loan"
+    - "land purchase"
+    - "equity release"
+    - "equity loan"
+    - "refinance"
+    - "top up"
+  
+  patterns:
+    - "first home"
+    - "fhb"
+    - "construction"
+    - "land"
+    - "equity"
+    - "top up"
+    - "top-up"
+  
+  label_keywords:
+    - "loan purpose"
+    - "purpose"
+    - "what is this for"
+  
+  max_words: 4
+
+# ============================================================================
+# PRODUCT SEGMENTATION KEYWORDS
+# ============================================================================
+# Filters for product features/segmentation
+# These change pricing but aren't loan types
+
+product_segment:
+  phrases:
+    - "package"
+    - "basic"
+    - "offset account"
+    - "no offset"
+    - "professional package"
+    - "digital only"
+    - "online only"
+    - "branch only"
+  
+  patterns:
+    - "package"
+    - "basic"
+    - "offset"
+    - "professional"
+    - "digital"
+    - "online"
+    - "premium"
+    - "standard"
+  
+  label_keywords:
+    - "product type"
+    - "package type"
+    - "features"
+    - "product features"
+  
+  max_words: 3
+
+# ============================================================================
+# REGION / RESIDENCY KEYWORDS
+# ============================================================================
+# Filters for geographic or residency-based pricing
+# Especially important for state-based pricing and foreign income
+
+region_residency:
+  phrases:
+    - "state"
+    - "residency"
+    - "resident"
+    - "non resident"
+    - "non-resident"
+    - "foreign income"
+    - "australian resident"
+    - "permanent resident"
+  
+  patterns:
+    - "state"
+    - "resident"
+    - "foreign"
+    - "overseas"
+    - "nsw"
+    - "vic"
+    - "qld"
+    - "wa"
+    - "sa"
+    - "tas"
+    - "nt"
+    - "act"
+  
+  label_keywords:
+    - "state"
+    - "region"
+    - "residency"
+    - "location"
+  
+  max_words: 3
+
+# ============================================================================
+# RATE TIER KEYWORDS (Beyond LVR)
+# ============================================================================
+# Additional tiering filters beyond LVR
+# Loan amount bands, risk bands, credit score bands
+
+rate_tier:
+  phrases:
+    - "loan amount"
+    - "loan size"
+    - "risk band"
+    - "credit score"
+    - "credit rating"
+    - "loan to income"
+    - "lti"
+  
+  patterns:
+    - "amount"
+    - "size"
+    - "band"
+    - "tier"
+    - "risk"
+    - "credit"
+    - "lti"
+    - "loan to income"
+  
+  label_keywords:
+    - "loan amount"
+    - "amount band"
+    - "risk"
+    - "credit"
+  
+  max_words: 4
+
+# ============================================================================
+# UI INTERACTION KEYWORDS
+# ============================================================================
+# Keywords for generic UI interactions (buttons, inputs, controls)
+# Used to detect dynamic content controls without hardcoding bank-specific text
+
+ui_interactions:
+  # "Show More" / "Load More" button patterns
+  show_more_patterns:
+    - "show more"
+    - "load more"
+    - "view all"
+    - "see more"
+    - "show all"
+    - "expand"
+    - "view more"
+  
+  # "Reset" / "Clear Filters" button patterns
+  reset_patterns:
+    - "reset"
+    - "clear"
+    - "clear all"
+    - "reset filters"
+    - "clear filters"
+    - "reset all"
+  
+  # Calculator widget detection patterns
+  # Used to distinguish loan calculators from product filters
+  # Calculators show rate estimates, not product listings
+  calculator_indicators:
+    - "estimated rate"
+    - "your rate"
+    - "calculate"
+    - "calculator"
+    - "example rate"
+    - "indicative rate"
+    - "rate estimate"
+    - "enter your"
+    - "estimate your"
+    - "find out your"
+    - "personalised rate"
+    - "what could you"
+    - "repayment calculator"
+    - "how much could i borrow"
+    - "borrowing power"
+  
+  # Eligibility checker widget indicators
+  eligibility_checker_indicators:
+    - "check eligibility"
+    - "am i eligible"
+    - "see if you qualify"
+    - "check if you qualify"
+    - "eligibility checker"
+    - "do i qualify"
+    - "pre-qualification"
+    - "quick check"
+    - "eligibility quiz"
+    - "find out if you"
+    - "see if i qualify"
+  
+  # Comparison tool widget indicators
+  comparison_tool_indicators:
+    - "compare products"
+    - "side by side"
+    - "product comparison"
+    - "compare options"
+    - "comparison tool"
+    - "compare loans"
+    - "which is right for you"
+    - "compare features"
+    - "product selector"
+    - "find the right loan"
+  
+  # Interactive demo/simulator indicators
+  simulator_indicators:
+    - "try it out"
+    - "interactive demo"
+    - "simulator"
+    - "simulation"
+    - "see how it works"
+    - "example scenario"
+    - "what if scenario"
+    - "test drive"
+    - "preview your"
+  
+  # Numeric input field patterns (for rate calculators)
+  numeric_input_fields:
+    - name: "loan_amount"
+      patterns:
+        - "loan"
+        - "amount"
+        - "borrow"
+      default_value: 500000
+    
+    - name: "property_value"
+      patterns:
+        - "property"
+        - "purchase"
+        - "value"
+      default_value: 650000
+    
+    - name: "deposit"
+      patterns:
+        - "deposit"
+        - "down payment"
+        - "equity"
+      default_value: 100000
+    
+    - name: "lvr"
+      patterns:
+        - "lvr"
+        - "loan to value"
+        - "ratio"
+      default_value: 80
+

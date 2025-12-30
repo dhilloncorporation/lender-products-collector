@@ -140,6 +140,20 @@ Last Updated: 2025-12-21
   - Target: 12/15 banks (80% success rate)
   - Focus: Westpac, NAB next (major banks)
 
+#### 🔄 Interactive Element Navigation
+- [ ] **Navigate buttons, tabs, and links to reveal hidden product data**
+  - [ ] Detect interactive elements (tabs, buttons, accordions, dropdowns) on product pages
+  - [ ] Implement automatic navigation strategy to click through all tabs/buttons
+  - [ ] Extract products from each revealed section
+  - [ ] Example: ANZ Bank "Interest Only" options only visible after clicking tab
+  - [ ] Handle dynamic content loading after interactions
+  - [ ] Wait for content to load after each interaction
+  - [ ] Collect products from all revealed sections
+  - [ ] Merge/consolidate products from multiple sections if needed
+  - [ ] Update `PlaywrightCollectorAgent` to support interactive navigation
+  - [ ] Add strategy detection for pages with tabs/buttons
+  - [ ] Test with ANZ Bank to capture Interest Only products
+
 ---
 
 ### Phase 1.7: Functional Scope Enhancements
